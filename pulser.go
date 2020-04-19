@@ -7,7 +7,7 @@ import (
 	"github.com/obsidiandynamics/libstdgo/concurrent"
 )
 
-// Pulser performs continuous pulsing of a Neli instance from a dedicated background goroutine.
+// Pulser performs continuous pulsing of a Neli instance from a dedicated background Goroutine.
 type Pulser interface {
 	Close()
 	Error() error
@@ -20,7 +20,7 @@ type pulser struct {
 	exited chan int
 }
 
-// Close the pulser, terminating the underlying goroutine.
+// Close the pulser, terminating the underlying Goroutine.
 func (p *pulser) Close() {
 	p.cancel()
 }
@@ -34,7 +34,7 @@ func (p *pulser) Error() error {
 	return nil
 }
 
-// Await the termination of the pulser goroutine, returning an accumulated error (if applicable).
+// Await the termination of the pulser Goroutine, returning an accumulated error (if applicable).
 func (p *pulser) Await() error {
 	<-p.exited
 	return p.Error()

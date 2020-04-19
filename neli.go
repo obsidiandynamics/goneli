@@ -258,13 +258,13 @@ func (n *neli) Await() {
 	n.state.Await(concurrent.RefEqual(Closed), concurrent.Indefinitely)
 }
 
-// Background will place the given LeaderTask for conditional execution in a newly-spawned background goroutine,
-// managed by the returned Pulser instance. The background goroutine will continuously invoke PulseCtx(),
+// Background will place the given LeaderTask for conditional execution in a newly-spawned background Goroutine,
+// managed by the returned Pulser instance. The background Goroutine will continuously invoke PulseCtx(),
 // followed by the given task if leader status is held.
 //
 // The task should perform a bite-sized amount of work, such that it does not block for longer than necessary
 // (max.poll.interval.ms in the worst-case). Ideally, the task should perform one atomic unit of work and
-// return immediately. The task mays schedule work on a separate goroutine so as to avoid blocking; however,
+// return immediately. The task mays schedule work on a separate Goroutine so as to avoid blocking; however,
 // it must then employ a Barrier to detect impending leader revocation and wrap up any in-flight work.
 func (n *neli) Background(task LeaderTask) (Pulser, error) {
 	return pulse(n, task)

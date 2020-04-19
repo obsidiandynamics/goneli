@@ -22,7 +22,7 @@ func Example() {
 		panic(err)
 	}
 
-	// Starts a pulser goroutine in the background, which will automatically terminate when Neli is closed.
+	// Starts a pulser Goroutine in the background, which will automatically terminate when Neli is closed.
 	p, _ := neli.Background(func() {
 		// An activity performed by the client application if it is the elected leader. This task should
 		// perform a small amount of work that is exclusively attributable to a leader, and return immediately. For as
@@ -74,7 +74,7 @@ func Example_lowLevel() {
 		panic(err)
 	}
 
-	// Pulsing is done in a separate goroutine. (We don't have to, but it's often practical to do so.)
+	// Pulsing is done in a separate Goroutine. (We don't have to, but it's often practical to do so.)
 	go func() {
 		defer neli.Close()
 
