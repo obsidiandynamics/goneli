@@ -394,10 +394,7 @@ func TestNonFatalErrorInReadMessage(t *testing.T) {
 	n, err := New(config)
 	require.Nil(t, err)
 
-	onLeaderCnt := concurrent.NewAtomicCounter()
-	p, err := n.Background(func() {
-		onLeaderCnt.Inc()
-	})
+	p, err := n.Background(func() {})
 	require.Nil(t, err)
 
 	// Wait for the error to be logged
@@ -424,10 +421,7 @@ func TestFatalErrorInReadMessage(t *testing.T) {
 	n, err := New(config)
 	require.Nil(t, err)
 
-	onLeaderCnt := concurrent.NewAtomicCounter()
-	p, err := n.Background(func() {
-		onLeaderCnt.Inc()
-	})
+	p, err := n.Background(func() {})
 	require.Nil(t, err)
 
 	// Wait for the error to be logged
@@ -447,6 +441,113 @@ func TestFatalErrorInReadMessage(t *testing.T) {
 	err = p.Error()
 	require.NotNil(t, err)
 	assert.Equal(t, "Fatal error: simulated", err.Error())
+}
+
+func TestNonFatalErrorInProduce(t *testing.T) {
+	m, cons, prod, config, _ := fixtures{}.create()
+
+	prod.f.Produce = func(m *prodMock, msg *kafka.Message, deliveryChan chan kafka.Event) error {
+		return kafka.NewError(kafka.ErrAllBrokersDown, "simulated", false)
+	}
+
+	n, err := New(config)
+	require.Nil(t, err)
+
+	p, err := n.Background(func() {})
+	require.Nil(t, err)
+
+	cons.rebalanceEvents <- assignedPartitions(0, 1, 2)
+
+	// Wait for the error to be logged
+	wait(t).UntilAsserted(m.ContainsEntries().
+		Having(scribe.LogLevel(scribe.Warn)).
+		Having(scribe.MessageContaining("Recoverable error during heartbeat")).
+		Passes(scribe.CountAtLeast(1)))
+	assert.Equal(t, Live, n.State())
+
+	assertNoError(t, n.Close)
+	n.Await()
+
+	assertNoError(t, p.Await)
+	assertNoError(t, p.Error)
+}
+
+func TestFatalErrorInProduce(t *testing.T) {
+	m, cons, prod, config, _ := fixtures{}.create()
+
+	prod.f.Produce = func(m *prodMock, msg *kafka.Message, deliveryChan chan kafka.Event) error {
+		return kafka.NewError(kafka.ErrFatal, "simulated", true)
+	}
+
+	n, err := New(config)
+	require.Nil(t, err)
+
+	p, err := n.Background(func() {})
+	require.Nil(t, err)
+
+	cons.rebalanceEvents <- assignedPartitions(0, 1, 2)
+
+	// Wait for the error to be logged
+	wait(t).UntilAsserted(m.ContainsEntries().
+		Having(scribe.LogLevel(scribe.Error)).
+		Having(scribe.MessageContaining("Fatal error during heartbeat")).
+		Passes(scribe.CountAtLeast(1)))
+	assert.Equal(t, Live, n.State())
+
+	assertNoError(t, n.Close)
+	n.Await()
+
+	err = p.Await()
+	require.NotNil(t, err)
+	assert.Equal(t, "Fatal error: simulated", err.Error())
+
+	err = p.Error()
+	require.NotNil(t, err)
+	assert.Equal(t, "Fatal error: simulated", err.Error())
+}
+
+func TestDeliveryReports(t *testing.T) {
+	m, _, prod, config, _ := fixtures{}.create()
+
+	n, err := New(config)
+	require.Nil(t, err)
+
+	p, err := n.Background(func() {})
+	require.Nil(t, err)
+
+	// Successful delivery.
+	prod.events <- &kafka.Message{
+		TopicPartition: kafka.TopicPartition{},
+	}
+	wait(t).UntilAsserted(m.ContainsEntries().
+		Having(scribe.LogLevel(scribe.Trace)).
+		Having(scribe.MessageContaining("Delivered message")).
+		Passes(scribe.Count(1)))
+
+	// Failed delivery.
+	prod.events <- &kafka.Message{
+		TopicPartition: kafka.TopicPartition{
+			Error: kafka.NewError(kafka.ErrAllBrokersDown, "simulated", false),
+		},
+	}
+	wait(t).UntilAsserted(m.ContainsEntries().
+		Having(scribe.LogLevel(scribe.Warn)).
+		Having(scribe.MessageContaining("Error delivering message")).
+		Passes(scribe.Count(1)))
+
+	// Non-delivery related event.
+	prod.events <- kafka.NewError(kafka.ErrAllBrokersDown, "simulated", false)
+	wait(t).UntilAsserted(m.ContainsEntries().
+		Having(scribe.LogLevel(scribe.Warn)).
+		Having(scribe.MessageContaining("Producer event")).
+		Passes(scribe.Count(1)))
+
+	assert.Equal(t, Live, n.State())
+	assertNoError(t, n.Close)
+	n.Await()
+
+	assertNoError(t, p.Await)
+	assertNoError(t, p.Error)
 }
 
 func TestClosePulser(t *testing.T) {
