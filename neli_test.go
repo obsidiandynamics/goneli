@@ -351,7 +351,7 @@ func TestLeaderElectionAndRevocation_timeoutAndReconnect(t *testing.T) {
 		Passes(scribe.Count(1)))
 	wait(t).UntilAsserted(atLeast(1, onLeaderCnt.GetInt))
 	wait(t).UntilAsserted(func(t check.Tester) {
-		if assert.Equal(t, 1, b.length()) {
+		if assert.GreaterOrEqual(t, b.length(), 1) {
 			_ = b.list()[0].(*LeaderElected)
 		}
 	})
@@ -360,7 +360,7 @@ func TestLeaderElectionAndRevocation_timeoutAndReconnect(t *testing.T) {
 		Having(scribe.MessageEqual("Lost leader status (heartbeat timed out)")).
 		Passes(scribe.Count(1)))
 	wait(t).UntilAsserted(func(t check.Tester) {
-		if assert.Equal(t, 2, b.length()) {
+		if assert.GreaterOrEqual(t, b.length(), 2) {
 			_ = b.list()[1].(*LeaderRevoked)
 		}
 	})
@@ -374,7 +374,7 @@ func TestLeaderElectionAndRevocation_timeoutAndReconnect(t *testing.T) {
 		Having(scribe.MessageEqual("Elected as leader (heartbeat received)")).
 		Passes(scribe.Count(1)))
 	wait(t).UntilAsserted(func(t check.Tester) {
-		if assert.Equal(t, 3, b.length()) {
+		if assert.GreaterOrEqual(t, b.length(), 3) {
 			_ = b.list()[2].(*LeaderElected)
 		}
 	})
