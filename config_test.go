@@ -60,7 +60,10 @@ func TestValidateConfig_invalidLimits(t *testing.T) {
 }
 
 func TestValidateConfig_default(t *testing.T) {
-	cfg := Config{}
+	cfg := Config{
+		LeaderTopic: "leader-topic",
+	}
 	cfg.SetDefaults()
+
 	assert.Nil(t, cfg.Validate())
 }

@@ -19,6 +19,7 @@ func Example() {
 			"session.timeout.ms":   6000,
 			"max.poll.interval.ms": 6500,
 		},
+		LeaderTopic: "mygroup.neli",
 	})
 	if err != nil {
 		panic(err)

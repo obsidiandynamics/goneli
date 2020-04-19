@@ -30,6 +30,7 @@ func (fixtureOpts fixtures) create() (scribe.MockScribe, *consMock, Config, *tes
 		MinPollInterval:       Duration(1 * time.Millisecond),
 		PollDuration:          Duration(1 * time.Millisecond),
 		Scribe:                scribe.New(m.Factories()),
+		LeaderTopic:           "test.topic",
 	}
 	config.Scribe.SetEnabled(scribe.All)
 

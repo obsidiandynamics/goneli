@@ -12,6 +12,8 @@ package goneli
 import (
 	"context"
 	"fmt"
+	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -37,7 +39,10 @@ type neli struct {
 	config       Config
 	scribe       scribe.Scribe
 	consumer     KafkaConsumer
+	producer     KafkaProducer
 	pollDeadline concurrent.Deadline
+	lastReceived time.Time
+	isAssigned   concurrent.AtomicCounter
 	isLeader     concurrent.AtomicCounter
 	barrier      Barrier
 	state        concurrent.AtomicReference
@@ -51,7 +56,7 @@ const (
 	// Live — currently operational, with a live Kafka consumer subscription.
 	Live State = iota
 
-	// Closing — in the process of closing the underlying resources (such as the Kafka consumer client).
+	// Closing — in the process of closing the underlying resources (such as the Kafka producer and consumer clients).
 	Closing
 
 	// Closed — has been completely disposed of.
@@ -73,6 +78,7 @@ func New(config Config, barrier ...Barrier) (Neli, error) {
 	n := &neli{
 		config:       config,
 		scribe:       config.Scribe,
+		isAssigned:   concurrent.NewAtomicCounter(),
 		isLeader:     concurrent.NewAtomicCounter(),
 		barrier:      barrierArg,
 		pollDeadline: concurrent.NewDeadline(*config.MinPollInterval),
@@ -83,6 +89,15 @@ func New(config Config, barrier ...Barrier) (Neli, error) {
 	err := setKafkaConfigs(consumerConfigs, KafkaConfigMap{
 		"group.id":           n.config.LeaderGroupID,
 		"enable.auto.commit": false,
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	producerConfigs := copyKafkaConfig(n.config.KafkaConfig)
+	err = setKafkaConfigs(producerConfigs, KafkaConfigMap{
+		"delivery.timeout.ms": 10000,
+		"linger.ms":           0,
 	})
 	if err != nil {
 		return nil, err
@@ -104,6 +119,8 @@ func New(config Config, barrier ...Barrier) (Neli, error) {
 			onAssigned(n, e)
 		case kafka.RevokedPartitions:
 			onRevoked(n, e)
+		default:
+			n.logger().I()("Consumer event %v (%T)", event, event)
 		}
 		return nil
 	})
@@ -111,16 +128,47 @@ func New(config Config, barrier ...Barrier) (Neli, error) {
 		return nil, err
 	}
 
+	n.logger().T()("Creating Kafka producer with config %v", &producerConfigs)
+	p, err := n.config.KafkaProducerProvider(&producerConfigs)
+	if err != nil {
+		return nil, err
+	}
+	n.producer = p
+	go func() {
+		for event := range p.Events() {
+			switch e := event.(type) {
+			case *kafka.Message:
+				if e.TopicPartition.Error != nil {
+					n.logger().W()("Error publishing message: %s %v", string(e.Value), e.TopicPartition.Error)
+				} else {
+					n.logger().T()("Delivered message: %s %v", string(e.Value), e.TopicPartition.Error)
+				}
+			default:
+				n.logger().T()("Producer event %v (%T)", event, event)
+			}
+		}
+	}()
+
 	success = true
 	return n, nil
 }
 
-func (n *neli) logger() scribe.StdLogAPI {
-	return n.scribe.Capture(n.scene())
+type heartbeat struct {
+	timestamp  int64
+	leaderName string
 }
 
-func (n *neli) scene() scribe.Scene {
-	return scribe.Scene{Fields: scribe.Fields{"name": n.config.Name}}
+func parse(bytes []byte) heartbeat {
+	//TODO handle errors
+	fields := strings.Split(string(bytes), "~")
+	timestamp, _ := strconv.ParseInt(fields[0], 10, 64)
+	leaderName := fields[1]
+	return heartbeat{timestamp, leaderName}
+}
+
+func (h heartbeat) format() []byte {
+	timestampStr := strconv.FormatInt(h.timestamp, 10)
+	return []byte(timestampStr + "~" + h.leaderName)
 }
 
 func (n *neli) cleanupFailedStart(success *bool) {
@@ -131,11 +179,27 @@ func (n *neli) cleanupFailedStart(success *bool) {
 	if n.consumer != nil {
 		n.consumer.Close()
 	}
+
+	if n.producer != nil {
+		n.producer.Close()
+	}
+}
+
+func (n *neli) logger() scribe.StdLogAPI {
+	return n.scribe.Capture(n.scene())
+}
+
+func (n *neli) scene() scribe.Scene {
+	return scribe.Scene{Fields: scribe.Fields{"name": n.config.Name}}
 }
 
 // IsLeader returns true if this Neli instance is currently the elected leader.
 func (n *neli) IsLeader() bool {
 	return n.isLeader.GetInt() == 1
+}
+
+func (n *neli) IsAssigned() bool {
+	return n.isAssigned.GetInt() == 1
 }
 
 // Pulse the Neli instance. This will occasionally poll the underlying Kafka consumer, thereby asserting the
@@ -186,6 +250,8 @@ func (n *neli) PulseCtx(ctx context.Context) (isLeader bool, err error) {
 	}
 }
 
+const receiveDeadline = 5 * time.Second
+
 func (n *neli) tryPulse() (bool, error) {
 	var error error
 	n.pollDeadline.TryRun(func() {
@@ -198,15 +264,53 @@ func (n *neli) tryPulse() (bool, error) {
 		}
 
 		// Polling is just to indicate consumer liveness; we don't actually care about the messages consumed.
-		n.logger().T()("Polling... (is leader: %v)", n.IsLeader())
-		_, err := n.consumer.ReadMessage(*n.config.PollDuration)
-		if err != nil {
-			if isFatalError(err) {
-				error = err
-				n.logger().E()("Fatal error during poll: %v", err)
-			} else if !isTimedOutError(err) {
-				n.logger().W()("Recoverable error during poll: %v", err)
+		var received *kafka.Message
+		n.logger().T()("Polling... (is assigned: %v, is leader: %v)", n.IsAssigned(), n.IsLeader())
+		for {
+			m, err := n.consumer.ReadMessage(*n.config.PollDuration)
+			if err != nil {
+				if isFatalError(err) {
+					error = err
+					n.logger().E()("Fatal error during poll: %v", err)
+				} else if !isTimedOutError(err) {
+					n.logger().W()("Recoverable error during poll: %v", err)
+				}
+				// n.logger().T()("Timed out: %v", err)
+				break
+			} else {
+				received = m
 			}
+		}
+
+		if n.IsAssigned() {
+			if received != nil {
+				n.logger().T()("Received: %v", received)
+				n.lastReceived = time.Now()
+				if n.isLeader.Get() == 0 {
+					n.isLeader.Set(1)
+					n.logger().I()("Elected as leader")
+					n.barrier(&LeaderElected{})
+				}
+			} else {
+				if n.isLeader.Get() == 1 {
+					if elapsed := time.Now().Sub(n.lastReceived); elapsed > receiveDeadline {
+						n.logger().I()("Lost leader status (timed out)")
+						n.isLeader.Set(0)
+						n.barrier(&LeaderRevoked{})
+					}
+				}
+			}
+
+			n.producer.Produce(&kafka.Message{
+				TopicPartition: kafka.TopicPartition{
+					Topic:     &n.config.LeaderTopic,
+					Partition: 0,
+				},
+				Value: heartbeat{
+					timestamp:  time.Now().UnixNano(),
+					leaderName: n.config.Name,
+				}.format(),
+			}, nil)
 		}
 	})
 	return n.IsLeader(), error
@@ -222,9 +326,7 @@ func (n *neli) Deadline() concurrent.Deadline {
 func onAssigned(n *neli, assigned kafka.AssignedPartitions) {
 	n.logger().T()("Assigned partitions: %s", assigned)
 	if containsPartition(assigned.Partitions, 0) {
-		n.isLeader.Set(1)
-		n.logger().I()("Elected as leader")
-		n.barrier(&LeaderElected{})
+		n.isAssigned.Set(1)
 	}
 }
 
@@ -232,6 +334,7 @@ func onRevoked(n *neli, revoked kafka.RevokedPartitions) {
 	n.logger().T()("Revoked partitions: %s", revoked)
 	if containsPartition(revoked.Partitions, 0) {
 		n.logger().I()("Lost leader status")
+		n.isAssigned.Set(0)
 		n.isLeader.Set(0)
 		n.barrier(&LeaderRevoked{})
 	}
@@ -242,13 +345,14 @@ func (n *neli) State() State {
 	return n.state.Get().(State)
 }
 
-// Close the Neli instance, terminating the underlying Kafka consumer client.
+// Close the Neli instance, terminating the underlying Kafka producer and consumer clients.
 func (n *neli) Close() error {
 	n.stateMutex.Lock()
 	defer n.stateMutex.Unlock()
 	defer n.state.Set(Closed)
 
 	n.state.Set(Closing)
+	n.producer.Close()
 	return n.consumer.Close()
 }
 
