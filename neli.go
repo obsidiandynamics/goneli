@@ -1,6 +1,9 @@
 package goneli
 
 import (
+	"fmt"
+	"sync"
+
 	"github.com/obsidiandynamics/libstdgo/concurrent"
 	"github.com/obsidiandynamics/libstdgo/scribe"
 	"gopkg.in/confluentinc/confluent-kafka-go.v1/kafka"
@@ -8,10 +11,12 @@ import (
 
 // Neli is a curator for leader election.
 type Neli interface {
-	Close() error
 	IsLeader() bool
 	Pulse() (bool, error)
 	Deadline() concurrent.Deadline
+	Close() error
+	Await()
+	State() State
 }
 
 type neli struct {
@@ -21,7 +26,23 @@ type neli struct {
 	pollDeadline concurrent.Deadline
 	isLeader     concurrent.AtomicCounter
 	eventHandler EventHandler
+	state        concurrent.AtomicReference
+	stateMutex   sync.Mutex
 }
+
+// State of the Neli instance.
+type State int
+
+const (
+	// Live — currently operational, with a live consumer client.
+	Live State = iota
+
+	// Closing — in the process of closing the underlying resources (Kafka consumer client).
+	Closing
+
+	// Closed — has been completely disposed of.
+	Closed
+)
 
 func New(config Config, eventHandler EventHandler) (Neli, error) {
 	config.SetDefaults()
@@ -34,6 +55,7 @@ func New(config Config, eventHandler EventHandler) (Neli, error) {
 		isLeader:     concurrent.NewAtomicCounter(),
 		eventHandler: eventHandler,
 		pollDeadline: concurrent.NewDeadline(*config.MinPollInterval),
+		state:        concurrent.NewAtomicReference(Live),
 	}
 
 	consumerConfigs := copyKafkaConfig(n.config.KafkaConfig)
@@ -97,6 +119,14 @@ func (n *neli) IsLeader() bool {
 func (n *neli) Pulse() (bool, error) {
 	var error error
 	n.pollDeadline.TryRun(func() {
+		n.stateMutex.Lock()
+		defer n.stateMutex.Unlock()
+
+		if n.State() != Live {
+			error = fmt.Errorf("cannot pulse in non-live state")
+			return
+		}
+
 		// Polling is just to indicate consumer liveness; we don't actually care about the messages consumed.
 		n.logger().T()("Polling... (is leader: %v)", n.IsLeader())
 		_, err := n.consumer.ReadMessage(*n.config.PollDuration)
@@ -134,6 +164,19 @@ func onRevoked(n *neli, revoked kafka.RevokedPartitions) {
 	}
 }
 
+func (n *neli) State() State {
+	return n.state.Get().(State)
+}
+
 func (n *neli) Close() error {
+	n.stateMutex.Lock()
+	defer n.stateMutex.Unlock()
+	defer n.state.Set(Closed)
+
+	n.state.Set(Closing)
 	return n.consumer.Close()
+}
+
+func (n *neli) Await() {
+	n.state.Await(concurrent.RefEqual(Closed), concurrent.Indefinitely)
 }

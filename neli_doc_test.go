@@ -1,35 +1,42 @@
 package goneli
 
 import (
-	"log"
 	"testing"
 	"time"
 
 	"github.com/obsidiandynamics/libstdgo/check"
+	"github.com/obsidiandynamics/libstdgo/scribe"
+	scribelogrus "github.com/obsidiandynamics/libstdgo/scribe/logrus"
+	logrus "github.com/sirupsen/logrus"
 )
 
 func Example() {
+	// A logger.
+	log := logrus.StandardLogger()
+	log.SetLevel(logrus.TraceLevel)
+
 	// Configure NELI.
 	config := Config{
 		KafkaConfig: KafkaConfigMap{
 			"bootstrap.servers": "localhost:9092",
 		},
+		Scribe: scribe.New(scribelogrus.Bind()),
 	}
 
-	// Create a new NELI curator.
+	// Create a new Neli curator.
 	neli, err := New(config, func(e Event) {
 		switch e.(type) {
 		case *LeaderElected:
-			log.Printf("Received event: leader elected")
+			log.Infof("Received event: leader elected")
 		case *LeaderRevoked:
-			log.Printf("Received event: leader revoked")
+			log.Infof("Received event: leader revoked")
 		}
 	})
 	if err != nil {
 		panic(err)
 	}
 
-	// Pulsing may be done in a separate goroutine.
+	// Pulsing is done in a separate goroutine.
 	go func() {
 		for {
 			isLeader, err := neli.Pulse()
@@ -38,13 +45,15 @@ func Example() {
 			}
 
 			if isLeader {
-				log.Printf("Do leader stuff")
+				log.Infof("Do leader stuff")
 			}
+
+			time.Sleep(100 * time.Millisecond)
 		}
 	}()
 
-	time.Sleep(1 * time.Hour)
-	neli.Close()
+	// Blocks until Neli is closed.
+	neli.Await()
 }
 
 func TestExample(t *testing.T) {
