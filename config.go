@@ -81,7 +81,7 @@ func (c *Config) SetDefaults() {
 		c.LeaderGroupID = filepath.Base(os.Args[0])
 	}
 	if c.LeaderTopic == "" {
-		c.LeaderTopic = "neli." + c.LeaderGroupID
+		c.LeaderTopic = c.LeaderGroupID + ".neli"
 	}
 	if c.KafkaConsumerProvider == nil {
 		c.KafkaConsumerProvider = StandardKafkaConsumerProvider()
