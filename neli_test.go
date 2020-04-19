@@ -19,7 +19,7 @@ func wait(t check.Tester) check.Timesert {
 
 type fixtures struct{}
 
-func (fixtureOpts fixtures) create() (scribe.MockScribe, *consMock, Config, *testEventHandler) {
+func (fixtureOpts fixtures) create() (scribe.MockScribe, *consMock, Config, *testBarrier) {
 	m := scribe.NewMock()
 
 	cons := &consMock{}
@@ -33,44 +33,38 @@ func (fixtureOpts fixtures) create() (scribe.MockScribe, *consMock, Config, *tes
 	}
 	config.Scribe.SetEnabled(scribe.All)
 
-	return m, cons, config, &testEventHandler{}
+	return m, cons, config, &testBarrier{}
 }
 
-type handler interface {
-	handler() EventHandler
-	list() []Event
-	length() int
-}
-
-type testEventHandler struct {
-	lock   sync.Mutex
+type testBarrier struct {
+	mutex  sync.Mutex
 	events []Event
 }
 
-func (c *testEventHandler) handler() EventHandler {
+func (c *testBarrier) barrier() Barrier {
 	return func(e Event) {
-		c.lock.Lock()
-		defer c.lock.Unlock()
+		c.mutex.Lock()
+		defer c.mutex.Unlock()
 		c.events = append(c.events, e)
 	}
 }
 
-func (c *testEventHandler) list() []Event {
-	c.lock.Lock()
-	defer c.lock.Unlock()
+func (c *testBarrier) list() []Event {
+	c.mutex.Lock()
+	defer c.mutex.Unlock()
 	eventsCopy := make([]Event, len(c.events))
 	copy(eventsCopy, c.events)
 	return eventsCopy
 }
 
-func (c *testEventHandler) length() int {
-	c.lock.Lock()
-	defer c.lock.Unlock()
+func (c *testBarrier) length() int {
+	c.mutex.Lock()
+	defer c.mutex.Unlock()
 	return len(c.events)
 }
 
 func TestCorrectInitialisation(t *testing.T) {
-	_, cons, config, eh := fixtures{}.create()
+	_, cons, config, b := fixtures{}.create()
 
 	var givenConsumerConfig *KafkaConfigMap
 	var givenLeaderTopic string
@@ -89,137 +83,137 @@ func TestCorrectInitialisation(t *testing.T) {
 		"bootstrap.servers": "localhost:9092",
 	}
 
-	h, err := New(config, eh.handler())
+	n, err := New(config, b.barrier())
 	require.Nil(t, err)
-	assert.Equal(t, Live, h.State())
+	assert.Equal(t, Live, n.State())
 
 	assert.Equal(t, config.LeaderTopic, givenLeaderTopic)
 	assert.Contains(t, *givenConsumerConfig, "bootstrap.servers")
 	assert.Equal(t, 1, cons.c.Subscribe.GetInt())
 
-	assertNoError(t, h.Close)
-	h.Await()
-	assert.Equal(t, Closed, h.State())
+	assertNoError(t, n.Close)
+	n.Await()
+	assert.Equal(t, Closed, n.State())
 
 	assert.Equal(t, 1, cons.c.Close.GetInt())
 }
 
 func TestConfigError(t *testing.T) {
-	h, err := New(Config{
+	n, err := New(Config{
 		MinPollInterval: Duration(0),
-	}, (&testEventHandler{}).handler())
-	assert.Nil(t, h)
+	}, (&testBarrier{}).barrier())
+	assert.Nil(t, n)
 	assert.NotNil(t, err)
 }
 
 func TestErrorDuringConsumerInitialisation(t *testing.T) {
-	_, _, config, eh := fixtures{}.create()
+	_, _, config, b := fixtures{}.create()
 
 	config.KafkaConsumerProvider = func(conf *KafkaConfigMap) (KafkaConsumer, error) {
 		return nil, check.ErrSimulated
 	}
-	h, err := New(config, eh.handler())
+	n, err := New(config, b.barrier())
 	require.NotNil(t, err)
 	assert.Contains(t, err.Error(), "simulated")
-	assert.Nil(t, h)
+	assert.Nil(t, n)
 }
 
 func TestErrorDuringConsumerConfiguration(t *testing.T) {
-	_, _, config, eh := fixtures{}.create()
+	_, _, config, b := fixtures{}.create()
 
 	config.KafkaConfig = KafkaConfigMap{
 		"group.id": "overridden_group",
 	}
-	h, err := New(config, eh.handler())
+	n, err := New(config, b.barrier())
 	require.NotNil(t, err)
 	assert.Contains(t, err.Error(), "cannot override configuration 'group.id'")
-	assert.Nil(t, h)
+	assert.Nil(t, n)
 }
 
 func TestErrorDuringSubscribe(t *testing.T) {
-	_, cons, config, eh := fixtures{}.create()
+	_, cons, config, b := fixtures{}.create()
 
 	cons.f.Subscribe = func(m *consMock, topic string, rebalanceCb kafka.RebalanceCb) error {
 		return check.ErrSimulated
 	}
 
-	h, err := New(config, eh.handler())
+	n, err := New(config, b.barrier())
 	require.NotNil(t, err)
 	assert.Contains(t, err.Error(), "simulated")
-	assert.Nil(t, h)
+	assert.Nil(t, n)
 	assert.Equal(t, 1, cons.c.Close.GetInt())
 }
 
 func TestPulseNotLeader(t *testing.T) {
-	_, _, config, eh := fixtures{}.create()
+	_, _, config, b := fixtures{}.create()
 
-	h, err := New(config, eh.handler())
+	n, err := New(config, b.barrier())
 	require.Nil(t, err)
 
-	isLeader, err := h.Pulse(1 * time.Millisecond)
+	isLeader, err := n.Pulse(1 * time.Millisecond)
 	assert.False(t, isLeader)
 	assert.Nil(t, err)
 
-	assertNoError(t, h.Close)
-	h.Await()
+	assertNoError(t, n.Close)
+	n.Await()
 }
 
 func TestPulseAfterClose(t *testing.T) {
-	_, _, config, eh := fixtures{}.create()
+	_, _, config, b := fixtures{}.create()
 
-	h, err := New(config, eh.handler())
+	n, err := New(config, b.barrier())
 	require.Nil(t, err)
 
-	assertNoError(t, h.Close)
-	h.Await()
+	assertNoError(t, n.Close)
+	n.Await()
 
-	isLeader, err := h.Pulse(1 * time.Millisecond)
+	isLeader, err := n.Pulse(1 * time.Millisecond)
 	assert.False(t, isLeader)
 	assert.Equal(t, err, ErrNonLivePulse)
 }
 
 func TestDeadline(t *testing.T) {
-	_, _, config, eh := fixtures{}.create()
+	_, _, config, b := fixtures{}.create()
 
-	h, err := New(config, eh.handler())
+	n, err := New(config, b.barrier())
 	require.Nil(t, err)
 
-	assert.Equal(t, h.Deadline().Last(), time.Unix(0, 0))
-	isLeader, err := h.Pulse(1 * time.Millisecond)
+	assert.Equal(t, n.Deadline().Last(), time.Unix(0, 0))
+	isLeader, err := n.Pulse(1 * time.Millisecond)
 	assert.False(t, isLeader)
 	assert.Nil(t, err)
-	assert.NotEqual(t, h.Deadline().Last(), time.Unix(0, 0))
+	assert.NotEqual(t, n.Deadline().Last(), time.Unix(0, 0))
 
-	assertNoError(t, h.Close)
-	h.Await()
+	assertNoError(t, n.Close)
+	n.Await()
 }
 
 func TestBasicLeaderElectionAndRevocation(t *testing.T) {
-	m, cons, config, eh := fixtures{}.create()
+	m, cons, config, b := fixtures{}.create()
 
-	h, err := New(config, eh.handler())
+	n, err := New(config, b.barrier())
 	require.Nil(t, err)
 
 	onLeaderCnt := concurrent.NewAtomicCounter()
-	p, err := h.Background(func() {
+	p, err := n.Background(func() {
 		onLeaderCnt.Inc()
 	})
 	require.Nil(t, err)
 
 	// Starts off in a non-leader state
-	assert.Equal(t, false, h.IsLeader())
+	assert.Equal(t, false, n.IsLeader())
 
 	// Assign leadership via the rebalance listener and wait for the assignment to take effect
 	cons.rebalanceEvents <- assignedPartitions(0, 1, 2)
-	wait(t).UntilAsserted(isTrue(h.IsLeader))
+	wait(t).UntilAsserted(isTrue(n.IsLeader))
 	wait(t).UntilAsserted(m.ContainsEntries().
 		Having(scribe.LogLevel(scribe.Info)).
 		Having(scribe.MessageEqual("Elected as leader")).
 		Passes(scribe.Count(1)))
 	m.Reset()
 	wait(t).UntilAsserted(func(t check.Tester) {
-		if assert.Equal(t, 1, eh.length()) {
-			_ = eh.list()[0].(*LeaderElected)
+		if assert.Equal(t, 1, b.length()) {
+			_ = b.list()[0].(*LeaderElected)
 		}
 	})
 	wait(t).UntilAsserted(atLeast(1, onLeaderCnt.GetInt))
@@ -232,20 +226,20 @@ func TestBasicLeaderElectionAndRevocation(t *testing.T) {
 			Having(scribe.MessageContaining("Revoked partitions")).
 			Passes(scribe.Count(1)))
 	m.Reset()
-	assert.True(t, h.IsLeader())
-	assert.Equal(t, 1, eh.length())
+	assert.True(t, n.IsLeader())
+	assert.Equal(t, 1, b.length())
 
 	// Revoke leadership via the rebalance listener and await its effect
 	cons.rebalanceEvents <- revokedPartitions(0, 2)
-	wait(t).UntilAsserted(isFalse(h.IsLeader))
+	wait(t).UntilAsserted(isFalse(n.IsLeader))
 	wait(t).UntilAsserted(m.ContainsEntries().
 		Having(scribe.LogLevel(scribe.Info)).
 		Having(scribe.MessageEqual("Lost leader status")).
 		Passes(scribe.Count(1)))
 	m.Reset()
 	wait(t).UntilAsserted(func(t check.Tester) {
-		if assert.Equal(t, 2, eh.length()) {
-			_ = eh.list()[1].(*LeaderRevoked)
+		if assert.Equal(t, 2, b.length()) {
+			_ = b.list()[1].(*LeaderRevoked)
 		}
 	})
 
@@ -256,11 +250,11 @@ func TestBasicLeaderElectionAndRevocation(t *testing.T) {
 		Having(scribe.MessageContaining("Assigned partitions")).
 		Passes(scribe.Count(1)))
 	m.Reset()
-	assert.False(t, h.IsLeader())
-	assert.Equal(t, 2, eh.length())
+	assert.False(t, n.IsLeader())
+	assert.Equal(t, 2, b.length())
 
-	assertNoError(t, h.Close)
-	h.Await()
+	assertNoError(t, n.Close)
+	n.Await()
 	assertNoError(t, p.Await)
 }
 
@@ -271,11 +265,11 @@ func TestNonFatalErrorInReadMessage(t *testing.T) {
 		return nil, kafka.NewError(kafka.ErrAllBrokersDown, "simulated", false)
 	}
 
-	h, err := New(config)
+	n, err := New(config)
 	require.Nil(t, err)
 
 	onLeaderCnt := concurrent.NewAtomicCounter()
-	p, err := h.Background(func() {
+	p, err := n.Background(func() {
 		onLeaderCnt.Inc()
 	})
 	require.Nil(t, err)
@@ -285,10 +279,10 @@ func TestNonFatalErrorInReadMessage(t *testing.T) {
 		Having(scribe.LogLevel(scribe.Warn)).
 		Having(scribe.MessageContaining("Recoverable error during poll")).
 		Passes(scribe.CountAtLeast(1)))
-	assert.Equal(t, Live, h.State())
+	assert.Equal(t, Live, n.State())
 
-	assertNoError(t, h.Close)
-	h.Await()
+	assertNoError(t, n.Close)
+	n.Await()
 
 	assertNoError(t, p.Await)
 	assertNoError(t, p.Error)
@@ -301,11 +295,11 @@ func TestFatalErrorInReadMessage(t *testing.T) {
 		return nil, kafka.NewError(kafka.ErrFatal, "simulated", true)
 	}
 
-	h, err := New(config)
+	n, err := New(config)
 	require.Nil(t, err)
 
 	onLeaderCnt := concurrent.NewAtomicCounter()
-	p, err := h.Background(func() {
+	p, err := n.Background(func() {
 		onLeaderCnt.Inc()
 	})
 	require.Nil(t, err)
@@ -315,10 +309,10 @@ func TestFatalErrorInReadMessage(t *testing.T) {
 		Having(scribe.LogLevel(scribe.Error)).
 		Having(scribe.MessageContaining("Fatal error during poll")).
 		Passes(scribe.CountAtLeast(1)))
-	assert.Equal(t, Live, h.State())
+	assert.Equal(t, Live, n.State())
 
-	assertNoError(t, h.Close)
-	h.Await()
+	assertNoError(t, n.Close)
+	n.Await()
 
 	err = p.Await()
 	require.NotNil(t, err)
@@ -332,11 +326,11 @@ func TestFatalErrorInReadMessage(t *testing.T) {
 func TestClosePulser(t *testing.T) {
 	_, _, config, _ := fixtures{}.create()
 
-	h, err := New(config)
+	n, err := New(config)
 	require.Nil(t, err)
 
 	onLeaderCnt := concurrent.NewAtomicCounter()
-	p, err := h.Background(func() {
+	p, err := n.Background(func() {
 		onLeaderCnt.Inc()
 	})
 	require.Nil(t, err)
@@ -345,12 +339,12 @@ func TestClosePulser(t *testing.T) {
 	assertNoError(t, p.Await)
 	assertNoError(t, p.Error)
 
-	assertNoError(t, h.Close)
-	h.Await()
+	assertNoError(t, n.Close)
+	n.Await()
 }
 
 func TestPulserWithError(t *testing.T) {
-	p, err := Pulse(nil, nil)
+	p, err := pulse(nil, nil)
 	assert.Nil(t, p)
 	assert.NotNil(t, err)
 }
@@ -358,12 +352,6 @@ func TestPulserWithError(t *testing.T) {
 func intEqual(expected int, intSupplier func() int) func(t check.Tester) {
 	return func(t check.Tester) {
 		assert.Equal(t, expected, intSupplier())
-	}
-}
-
-func lengthEqual(expected int, sliceSupplier func() []string) func(t check.Tester) {
-	return func(t check.Tester) {
-		assert.Len(t, sliceSupplier(), expected)
 	}
 }
 
@@ -388,13 +376,6 @@ func isFalse(f func() bool) check.Assertion {
 func isNotNil(f func() interface{}) check.Assertion {
 	return func(t check.Tester) {
 		assert.NotNil(t, f())
-	}
-}
-
-func assertErrorContaining(t *testing.T, f func() error, substr string) {
-	err := f()
-	if assert.NotNil(t, err) {
-		assert.Contains(t, err.Error(), substr)
 	}
 }
 

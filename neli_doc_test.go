@@ -12,27 +12,29 @@ import (
 )
 
 func Example() {
-	// Configure Neli.
-	config := Config{
+	// Create a new Neli curator.
+	neli, err := New(Config{
 		KafkaConfig: KafkaConfigMap{
 			"bootstrap.servers": "localhost:9092",
 		},
-	}
-
-	// Create a new Neli curator.
-	neli, err := New(config)
+	})
 	if err != nil {
 		panic(err)
 	}
 
-	// Starts a goroutine in the background, which will automatically terminate when Neli is closed.
-	neli.Background(func() {
+	// Starts a pulser goroutine in the background, which will automatically terminate when Neli is closed.
+	p, _ := neli.Background(func() {
+		// An activity performed by the client application if it is the elected leader. This task should
+		// perform a small amount of work that is exclusively attributable to a leader, and return immediately. For as
+		// long as the associated Neli instance is the leader, this task will be invoked repeatedly; therefore, it should
+		// break down any long-running work into bite-sized chunks that can be safely performed without causing excessive
+		// blocking.
 		log.Printf("Do important leader stuff")
 		time.Sleep(100 * time.Millisecond)
 	})
 
-	// Blocks until Neli is closed.
-	neli.Await()
+	// Blocks until Neli is closed or an unrecoverable error occurs.
+	panic(p.Await())
 }
 
 func TestExample(t *testing.T) {
@@ -40,7 +42,7 @@ func TestExample(t *testing.T) {
 }
 
 func Example_lowLevel() {
-	// A custom logger.
+	// Bootstrap a custom logger.
 	log := logrus.StandardLogger()
 	log.SetLevel(logrus.TraceLevel)
 
@@ -53,18 +55,21 @@ func Example_lowLevel() {
 	}
 
 	// Blocking handler of leader status updates. Used to initialise state upon leader acquisition, and to wrap up
-	// in-flight work before relinquishing leader status.
-	eventHandler := func(e Event) {
+	// in-flight work before relinquishing leader status. Kafka will suspend rebalancing for as long as the barrier
+	// is blocked.
+	barrier := func(e Event) {
 		switch e.(type) {
 		case *LeaderElected:
 			log.Infof("Received event: leader elected")
+			// Initialise state.
 		case *LeaderRevoked:
 			log.Infof("Received event: leader revoked")
+			// Clean up any pending work.
 		}
 	}
 
-	// Create a new Neli curator.
-	neli, err := New(config, eventHandler)
+	// Create a new Neli curator, supplying the barrier as an optional argument.
+	neli, err := New(config, barrier)
 	if err != nil {
 		panic(err)
 	}
@@ -78,11 +83,13 @@ func Example_lowLevel() {
 			// Will return instantly if already leader.
 			isLeader, err := neli.Pulse(10 * time.Millisecond)
 			if err != nil {
+				// Only fatal errors are returned from Pulse().
 				panic(err)
 			}
 
-			// We hold leader status... let's act as one.
 			if isLeader {
+				// We hold leader status... can safely do some work.
+				// Avoid blocking for too long, otherwise we may miss a poll and lose leader status.
 				log.Infof("Do important leader stuff")
 				time.Sleep(100 * time.Millisecond)
 			}

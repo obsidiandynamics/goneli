@@ -4,11 +4,11 @@ import (
 	"fmt"
 )
 
-// EventHandler is a callback function for handling Neli events.
-type EventHandler func(e Event)
+// Barrier is a callback function for handling Neli events during group rebalancing.
+type Barrier func(e Event)
 
-// NopEventHandler returns a no-op event handler implementation.
-func NopEventHandler() EventHandler {
+// NopBarrier returns a no-op barrier implementation.
+func NopBarrier() Barrier {
 	return func(e Event) {}
 }
 

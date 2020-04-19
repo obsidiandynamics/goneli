@@ -1,3 +1,12 @@
+/*
+Package goneli implements the (Non-)Exclusive Leader Induction protocol (NELI), published
+in https://github.com/obsidiandynamics/NELI.
+
+This implementation is for the 'simplified' variation of the protocol, running in exclusive mode over a
+single NELI group.
+
+This implementation is thread-safe.
+*/
 package goneli
 
 import (
@@ -21,7 +30,7 @@ type Neli interface {
 	Close() error
 	Await()
 	State() State
-	Background(onLeader OnLeader) (Pulser, error)
+	Background(task LeaderTask) (Pulser, error)
 }
 
 type neli struct {
@@ -30,7 +39,7 @@ type neli struct {
 	consumer     KafkaConsumer
 	pollDeadline concurrent.Deadline
 	isLeader     concurrent.AtomicCounter
-	eventHandler EventHandler
+	barrier      Barrier
 	state        concurrent.AtomicReference
 	stateMutex   sync.Mutex
 }
@@ -49,10 +58,13 @@ const (
 	Closed
 )
 
+// ErrNonLivePulse is returned by Pulse() if the Neli instance has been closed.
 var ErrNonLivePulse = fmt.Errorf("cannot pulse in non-live state")
 
-func New(config Config, eventHandler ...EventHandler) (Neli, error) {
-	eh := arity.SoleUntyped(NopEventHandler(), eventHandler).(EventHandler)
+// New creates a Neli instance for the given config and optional barrier. If unspecified, a no-op barrier
+// is used.
+func New(config Config, barrier ...Barrier) (Neli, error) {
+	barrierArg := arity.SoleUntyped(NopBarrier(), barrier).(Barrier)
 
 	config.SetDefaults()
 	if err := config.Validate(); err != nil {
@@ -62,7 +74,7 @@ func New(config Config, eventHandler ...EventHandler) (Neli, error) {
 		config:       config,
 		scribe:       config.Scribe,
 		isLeader:     concurrent.NewAtomicCounter(),
-		eventHandler: eh,
+		barrier:      barrierArg,
 		pollDeadline: concurrent.NewDeadline(*config.MinPollInterval),
 		state:        concurrent.NewAtomicReference(Live),
 	}
@@ -121,17 +133,42 @@ func (n *neli) cleanupFailedStart(success *bool) {
 	}
 }
 
+// IsLeader returns true if this Neli instance is currently the elected leader.
 func (n *neli) IsLeader() bool {
 	return n.isLeader.GetInt() == 1
 }
 
-func (n *neli) Pulse(timeout time.Duration) (bool, error) {
+// Pulse the Neli instance. This will occasionally poll the underlying Kafka consumer, thereby asserting the
+// client's health to the Kafka cluster. The timeout specifies how long this method should block if the
+// client is not the current leader. If leader status is acquired, this method will return true. Otherwise,
+// if leader status could not be acquired within the timeout period, false is returned.
+//
+// If a fatal error is encountered upon attempting to poll Kafka, it is returned along with the present leader status.
+//
+// Either Pulse() or PulseCtx() should be called routinely by the application to indicate liveness. If this method is
+// not called within the period specified by the max.poll.interval.ms Kafka property, the client risks having
+// its leader status silently revoked, creating a potentially hazardous situation. Calling this method is 'cheap'; it
+// will only result in network I/O approximately once every Config.MinPollInterval. As such, it should be called as
+// frequently as possible — ideally from a tight loop.
+func (n *neli) Pulse(timeout time.Duration) (isLeader bool, err error) {
 	ctx, cancel := concurrent.Timeout(context.Background(), timeout)
 	defer cancel()
 	return n.PulseCtx(ctx)
 }
 
-func (n *neli) PulseCtx(ctx context.Context) (bool, error) {
+// Pulse the Neli instance. This will occasionally poll the underlying Kafka consumer, thereby asserting the
+// client's health to the Kafka cluster. The ctx argument allows this method to be cancelled. If leader status is
+// acquired prior to cancellation, this method will return true. Otherwise, if leader status could not be acquired
+// before the invocation was cancelled, false is returned.
+//
+// If a fatal error is encountered upon attempting to poll Kafka, it is returned along with the present leader status.
+//
+// Either Pulse() or PulseCtx() should be called routinely by the application to indicate liveness. If this method is
+// not called within the period specified by the max.poll.interval.ms Kafka property, the client risks having
+// its leader status silently revoked, creating a potentially hazardous situation. Calling this method is 'cheap'; it
+// will only result in network I/O approximately once every Config.MinPollInterval. As such, it should be called as
+// frequently as possible — ideally from a tight loop.
+func (n *neli) PulseCtx(ctx context.Context) (isLeader bool, err error) {
 	for {
 		leader, err := n.tryPulse()
 		if leader || err != nil {
@@ -176,6 +213,9 @@ func (n *neli) tryPulse() (bool, error) {
 	return n.IsLeader(), error
 }
 
+// Deadline returns the underlying poll deadline object, concerning the minimum (lower bound) poll interval. The
+// returned Deadline can be used to determine when the last Kafka poll was made and when the next one is expected
+// to occur.
 func (n *neli) Deadline() concurrent.Deadline {
 	return n.pollDeadline
 }
@@ -185,7 +225,7 @@ func onAssigned(n *neli, assigned kafka.AssignedPartitions) {
 	if containsPartition(assigned.Partitions, 0) {
 		n.isLeader.Set(1)
 		n.logger().I()("Elected as leader")
-		n.eventHandler(&LeaderElected{})
+		n.barrier(&LeaderElected{})
 	}
 }
 
@@ -194,14 +234,16 @@ func onRevoked(n *neli, revoked kafka.RevokedPartitions) {
 	if containsPartition(revoked.Partitions, 0) {
 		n.logger().I()("Lost leader status")
 		n.isLeader.Set(0)
-		n.eventHandler(&LeaderRevoked{})
+		n.barrier(&LeaderRevoked{})
 	}
 }
 
+// State returns the current state of this Neli instance.
 func (n *neli) State() State {
 	return n.state.Get().(State)
 }
 
+// Close the Neli instance, terminating the underlying Kafka consumer client.
 func (n *neli) Close() error {
 	n.stateMutex.Lock()
 	defer n.stateMutex.Unlock()
@@ -211,10 +253,19 @@ func (n *neli) Close() error {
 	return n.consumer.Close()
 }
 
+// Await the closing of this Neli instance.
 func (n *neli) Await() {
 	n.state.Await(concurrent.RefEqual(Closed), concurrent.Indefinitely)
 }
 
-func (n *neli) Background(onLeader OnLeader) (Pulser, error) {
-	return Pulse(n, onLeader)
+// Background will place the given LeaderTask for conditional execution in a newly-spawned background goroutine,
+// managed by the returned Pulser instance. The background goroutine will continuously invoke PulseCtx(),
+// followed by the given task if leader status is held.
+//
+// The task should perform a bite-sized amount of work, such that it does not block for longer than necessary
+// (max.poll.interval.ms in the worst-case). Ideally, the task should perform one atomic unit of work and
+// return immediately. The task mays schedule work on a separate goroutine so as to avoid blocking; however,
+// it must then employ a Barrier to detect impending leader revocation and wrap up any in-flight work.
+func (n *neli) Background(task LeaderTask) (Pulser, error) {
+	return pulse(n, task)
 }
