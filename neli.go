@@ -95,7 +95,7 @@ func New(config Config, barrier ...Barrier) (Neli, error) {
 
 	producerConfigs := copyKafkaConfig(n.config.KafkaConfig)
 	err = setKafkaConfigs(producerConfigs, KafkaConfigMap{
-		"delivery.timeout.ms": config.ReceiveDeadline.Milliseconds,
+		"delivery.timeout.ms": int(config.ReceiveDeadline.Milliseconds()),
 		"linger.ms":           0,
 	})
 	if err != nil {
