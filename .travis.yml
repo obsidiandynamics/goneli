@@ -4,11 +4,18 @@ go:
   - 1.13.x
   - 1.14.x
 
+services:
+  - docker
+
 before_install:
   - go get -u -v all
+  - |
+    docker run --name kafka --rm -it -p 2181:2181 -p 9092:9092 \
+    obsidiandynamics/kafka
 
 script:
   - make
+  - make int
 
 after_success:
   - bash <(curl -s https://codecov.io/bash)
