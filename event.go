@@ -2,6 +2,8 @@ package goneli
 
 import (
 	"fmt"
+
+	"github.com/obsidiandynamics/libstdgo/concurrent"
 )
 
 // Barrier is a callback function for handling Neli events during group rebalancing.
@@ -9,7 +11,9 @@ type Barrier func(e Event)
 
 // NopBarrier returns a no-op barrier implementation.
 func NopBarrier() Barrier {
-	return func(e Event) {}
+	return func(e Event) {
+		concurrent.Nop()
+	}
 }
 
 // Event encapsulates a Neli event.

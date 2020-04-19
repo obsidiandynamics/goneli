@@ -145,9 +145,9 @@ func TestErrorDuringSubscribe(t *testing.T) {
 }
 
 func TestPulseNotLeader(t *testing.T) {
-	_, _, config, b := fixtures{}.create()
+	_, _, config, _ := fixtures{}.create()
 
-	n, err := New(config, b.barrier())
+	n, err := New(config)
 	require.Nil(t, err)
 
 	isLeader, err := n.Pulse(1 * time.Millisecond)
@@ -159,9 +159,9 @@ func TestPulseNotLeader(t *testing.T) {
 }
 
 func TestPulseAfterClose(t *testing.T) {
-	_, _, config, b := fixtures{}.create()
+	_, _, config, _ := fixtures{}.create()
 
-	n, err := New(config, b.barrier())
+	n, err := New(config)
 	require.Nil(t, err)
 
 	assertNoError(t, n.Close)
@@ -173,9 +173,9 @@ func TestPulseAfterClose(t *testing.T) {
 }
 
 func TestDeadline(t *testing.T) {
-	_, _, config, b := fixtures{}.create()
+	_, _, config, _ := fixtures{}.create()
 
-	n, err := New(config, b.barrier())
+	n, err := New(config)
 	require.Nil(t, err)
 
 	assert.Equal(t, n.Deadline().Last(), time.Unix(0, 0))
@@ -252,6 +252,36 @@ func TestBasicLeaderElectionAndRevocation(t *testing.T) {
 	m.Reset()
 	assert.False(t, n.IsLeader())
 	assert.Equal(t, 2, b.length())
+
+	assertNoError(t, n.Close)
+	n.Await()
+	assertNoError(t, p.Await)
+}
+
+func TestLeaderElectionAndRevocation_nopBarrier(t *testing.T) {
+	m, cons, config, _ := fixtures{}.create()
+
+	n, err := New(config)
+	require.Nil(t, err)
+
+	onLeaderCnt := concurrent.NewAtomicCounter()
+	p, err := n.Background(func() {
+		onLeaderCnt.Inc()
+	})
+	require.Nil(t, err)
+
+	// Starts off in a non-leader state
+	assert.Equal(t, false, n.IsLeader())
+
+	// Assign leadership via the rebalance listener and wait for the assignment to take effect
+	cons.rebalanceEvents <- assignedPartitions(0, 1, 2)
+	wait(t).UntilAsserted(isTrue(n.IsLeader))
+	wait(t).UntilAsserted(m.ContainsEntries().
+		Having(scribe.LogLevel(scribe.Info)).
+		Having(scribe.MessageEqual("Elected as leader")).
+		Passes(scribe.Count(1)))
+	m.Reset()
+	wait(t).UntilAsserted(atLeast(1, onLeaderCnt.GetInt))
 
 	assertNoError(t, n.Close)
 	n.Await()
