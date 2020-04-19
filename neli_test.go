@@ -246,12 +246,12 @@ func TestBasicLeaderElectionAndRevocation(t *testing.T) {
 	wait(t).UntilAsserted(isTrue(n.IsLeader))
 	wait(t).UntilAsserted(m.ContainsEntries().
 		Having(scribe.LogLevel(scribe.Info)).
-		Having(scribe.MessageEqual("Elected as leader")).
+		Having(scribe.MessageEqual("Acquired leader status")).
 		Passes(scribe.Count(1)))
 	m.Reset()
 	wait(t).UntilAsserted(func(t check.Tester) {
 		if assert.Equal(t, 1, b.length()) {
-			_ = b.list()[0].(*LeaderElected)
+			_ = b.list()[0].(*LeaderAcquired)
 		}
 	})
 	wait(t).UntilAsserted(atLeast(1, onLeaderCnt.GetInt))
@@ -316,7 +316,7 @@ func TestLeaderElectionAndRevocation_nopBarrier(t *testing.T) {
 	wait(t).UntilAsserted(isTrue(n.IsLeader))
 	wait(t).UntilAsserted(m.ContainsEntries().
 		Having(scribe.LogLevel(scribe.Info)).
-		Having(scribe.MessageEqual("Elected as leader")).
+		Having(scribe.MessageEqual("Acquired leader status")).
 		Passes(scribe.Count(1)))
 	m.Reset()
 	wait(t).UntilAsserted(atLeast(1, onLeaderCnt.GetInt))
@@ -347,21 +347,21 @@ func TestLeaderElectionAndRevocation_timeoutAndReconnect(t *testing.T) {
 	cons.rebalanceEvents <- assignedPartitions(0, 1, 2)
 	wait(t).UntilAsserted(m.ContainsEntries().
 		Having(scribe.LogLevel(scribe.Info)).
-		Having(scribe.MessageEqual("Elected as leader")).
+		Having(scribe.MessageEqual("Acquired leader status")).
 		Passes(scribe.Count(1)))
 	wait(t).UntilAsserted(atLeast(1, onLeaderCnt.GetInt))
 	wait(t).UntilAsserted(func(t check.Tester) {
 		if assert.GreaterOrEqual(t, b.length(), 1) {
-			_ = b.list()[0].(*LeaderElected)
+			_ = b.list()[0].(*LeaderAcquired)
 		}
 	})
 	wait(t).UntilAsserted(m.ContainsEntries().
 		Having(scribe.LogLevel(scribe.Info)).
-		Having(scribe.MessageEqual("Lost leader status (heartbeat timed out)")).
+		Having(scribe.MessageEqual("Fenced leader (heartbeat timed out)")).
 		Passes(scribe.Count(1)))
 	wait(t).UntilAsserted(func(t check.Tester) {
 		if assert.GreaterOrEqual(t, b.length(), 2) {
-			_ = b.list()[1].(*LeaderRevoked)
+			_ = b.list()[1].(*LeaderFenced)
 		}
 	})
 	m.Reset()
@@ -371,11 +371,11 @@ func TestLeaderElectionAndRevocation_timeoutAndReconnect(t *testing.T) {
 	cons.messages <- &kafka.Message{}
 	wait(t).UntilAsserted(m.ContainsEntries().
 		Having(scribe.LogLevel(scribe.Info)).
-		Having(scribe.MessageEqual("Elected as leader (heartbeat received)")).
+		Having(scribe.MessageEqual("Resumed leader status (heartbeat received)")).
 		Passes(scribe.Count(1)))
 	wait(t).UntilAsserted(func(t check.Tester) {
 		if assert.GreaterOrEqual(t, b.length(), 3) {
-			_ = b.list()[2].(*LeaderElected)
+			_ = b.list()[2].(*LeaderAcquired)
 		}
 	})
 

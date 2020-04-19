@@ -17,8 +17,8 @@ func Example() {
 		KafkaConfig: KafkaConfigMap{
 			"bootstrap.servers": "localhost:9092",
 		},
-		LeaderGroupID: "my-app-name",
-		LeaderTopic:   "my-app-name.neli",
+		LeaderGroupID: "my-app-name.group",
+		LeaderTopic:   "my-app-name.topic",
 	})
 	if err != nil {
 		panic(err)
@@ -53,22 +53,27 @@ func Example_lowLevel() {
 		KafkaConfig: KafkaConfigMap{
 			"bootstrap.servers": "localhost:9092",
 		},
-		LeaderGroupID: "my-app-name",
-		LeaderTopic:   "my-app-name.neli",
+		LeaderGroupID: "my-app-name.group",
+		LeaderTopic:   "my-app-name.topic",
 		Scribe:        scribe.New(scribelogrus.Bind()),
 	}
 
-	// Blocking handler of leader status updates. Used to initialise state upon leader acquisition, and to wrap up
-	// in-flight work before relinquishing leader status. Kafka will suspend rebalancing for as long as the barrier
-	// is blocked.
+	// Handler of leader status updates. Used to initialise state upon leader acquisition, and to
+	// wrap up in-flight work upon loss of leader status.
 	barrier := func(e Event) {
 		switch e.(type) {
-		case *LeaderElected:
-			// Initialise state.
+		case *LeaderAcquired:
+			// The application may initialise any state necessary to perform work as a leader.
 			log.Infof("Received event: leader elected")
 		case *LeaderRevoked:
-			// Clean up any pending work.
+			// The application may block the Barrier callback until it wraps up any in-flight
+			// activity. Only upon returning from the callback, will a new leader be elected.
 			log.Infof("Received event: leader revoked")
+		case *LeaderFenced:
+			// The application must immediately terminate any ongoing activity, on the assumption
+			// that another leader may be imminently elected. Unlike the handling of LeaderRevoked,
+			// blocking in the Barrier callback will not prevent a new leader from being elected.
+			log.Infof("Received event: leader fenced")
 		}
 	}
 

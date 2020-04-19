@@ -274,8 +274,8 @@ func (n *neli) tryPulse() (bool, error) {
 					// If the leader status was previously revoked (due to a heartbeat timeout), reinstate
 					// leadership.
 					n.isLeader.Set(1)
-					n.logger().I()("Elected as leader (heartbeat received)")
-					n.barrier(&LeaderElected{})
+					n.logger().I()("Resumed leader status (heartbeat received)")
+					n.barrier(&LeaderAcquired{})
 				}
 			} else {
 				// No messages were received during the last poll.
@@ -284,9 +284,9 @@ func (n *neli) tryPulse() (bool, error) {
 					// This enables us to detect network partitions and broker failures.
 					lastReceived := time.Unix(0, n.lastReceived.Get())
 					if elapsed := time.Now().Sub(lastReceived); elapsed > *n.config.ReceiveDeadline {
-						n.logger().I()("Lost leader status (heartbeat timed out)")
+						n.logger().I()("Fenced leader (heartbeat timed out)")
 						n.isLeader.Set(0)
-						n.barrier(&LeaderRevoked{})
+						n.barrier(&LeaderFenced{})
 					}
 				}
 			}
@@ -325,11 +325,11 @@ func (n *neli) Deadline() concurrent.Deadline {
 func onAssigned(n *neli, assigned kafka.AssignedPartitions) {
 	n.logger().T()("Assigned partitions: %s", assigned)
 	if containsPartition(assigned.Partitions, 0) {
-		n.logger().I()("Elected as leader")
+		n.logger().I()("Acquired leader status")
 		n.isAssigned.Set(1)
 		n.isLeader.Set(1)
 		n.lastReceived.Set(time.Now().UnixNano())
-		n.barrier(&LeaderElected{})
+		n.barrier(&LeaderAcquired{})
 	}
 }
 
