@@ -327,10 +327,10 @@ func TestLeaderElectionAndRevocation_nopBarrier(t *testing.T) {
 }
 
 func TestLeaderElectionAndRevocation_timeoutAndReconnect(t *testing.T) {
-	m, cons, _, config, _ := fixtures{}.create()
-	config.ReceiveDeadline = 1 * time.Millisecond
+	m, cons, _, config, b := fixtures{}.create()
+	config.ReceiveDeadline = Duration(1 * time.Millisecond)
 
-	n, err := New(config)
+	n, err := New(config, b.barrier())
 	require.Nil(t, err)
 
 	onLeaderCnt := concurrent.NewAtomicCounter()
@@ -349,8 +349,23 @@ func TestLeaderElectionAndRevocation_timeoutAndReconnect(t *testing.T) {
 		Having(scribe.LogLevel(scribe.Info)).
 		Having(scribe.MessageEqual("Elected as leader")).
 		Passes(scribe.Count(1)))
-	m.Reset()
 	wait(t).UntilAsserted(atLeast(1, onLeaderCnt.GetInt))
+	wait(t).UntilAsserted(func(t check.Tester) {
+		if assert.Equal(t, 1, b.length()) {
+			_ = b.list()[0].(*LeaderElected)
+		}
+	})
+	wait(t).UntilAsserted(m.ContainsEntries().
+		Having(scribe.LogLevel(scribe.Info)).
+		Having(scribe.MessageEqual("Lost leader status (heartbeat timed out)")).
+		Passes(scribe.Count(1)))
+	wait(t).UntilAsserted(func(t check.Tester) {
+		if assert.Equal(t, 2, b.length()) {
+			_ = b.list()[1].(*LeaderRevoked)
+		}
+	})
+
+	//TODO also assert barrier events
 
 	assertNoError(t, n.Close)
 	n.Await()

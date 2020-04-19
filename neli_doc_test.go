@@ -17,6 +17,8 @@ func Example() {
 		KafkaConfig: KafkaConfigMap{
 			"bootstrap.servers": "localhost:9092",
 		},
+		LeaderGroupID: "my-app-name",
+		LeaderTopic:   "my-app-name.neli",
 	})
 	if err != nil {
 		panic(err)
@@ -51,7 +53,9 @@ func Example_lowLevel() {
 		KafkaConfig: KafkaConfigMap{
 			"bootstrap.servers": "localhost:9092",
 		},
-		Scribe: scribe.New(scribelogrus.Bind()),
+		LeaderGroupID: "my-app-name",
+		LeaderTopic:   "my-app-name.neli",
+		Scribe:        scribe.New(scribelogrus.Bind()),
 	}
 
 	// Blocking handler of leader status updates. Used to initialise state upon leader acquisition, and to wrap up
