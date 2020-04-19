@@ -55,7 +55,15 @@ Sometimes more control is needed. For example —
 
 * Configuring a custom logger, based on your application's needs.
 * Setting up a barrier to synchronize leadership transition, so that the new leader does not step in until the outgoing leader has completed all of its backlogged work.
-* Manual pulsing of the `Neli` instance from your own Goroutine.
+* Pulsing of the `Neli` instance from your own Goroutine.
+
+```go
+// Additional imports for the logger and Scribe bindings.
+import (
+	scribelogrus "github.com/obsidiandynamics/libstdgo/scribe/logrus"
+	logrus "github.com/sirupsen/logrus"
+)
+```
 
 ```go
 // Bootstrap a custom logger.
