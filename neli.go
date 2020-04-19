@@ -2,7 +2,7 @@
 Package goneli implements the (Non-)Exclusive Leader Induction protocol (NELI), published
 in https://github.com/obsidiandynamics/NELI.
 
-This implementation is for the 'simplified' variation of the protocol, running in exclusive mode over a
+This implementation is for the 'fast' variation of the protocol, running in exclusive mode over a
 single NELI group.
 
 This implementation is thread-safe.
@@ -89,6 +89,7 @@ func New(config Config, barrier ...Barrier) (Neli, error) {
 	err := setKafkaConfigs(consumerConfigs, KafkaConfigMap{
 		"group.id":           n.config.LeaderGroupID,
 		"enable.auto.commit": false,
+		"session.timeout.ms": int(config.ReceiveDeadline.Milliseconds()) * 3,
 	})
 	if err != nil {
 		return nil, err
