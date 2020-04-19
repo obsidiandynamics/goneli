@@ -286,12 +286,13 @@ func (n *neli) tryPulse() (bool, error) {
 					n.barrier(&LeaderElected{})
 				}
 			} else {
+				n.logger().I()("Last received %v", n.lastReceived)
 				// No messages were received during the last poll.
 				if n.isLeader.Get() == 1 {
 					// If we were previously the leeder, need to make sure that we are still receiving heartbeats.
 					// This enables us to detect network partitions and broker failures.
 					if elapsed := time.Now().Sub(n.lastReceived); elapsed > *n.config.ReceiveDeadline {
-						n.logger().I()("Lost leader status (hearbeat timed out)")
+						n.logger().I()("Lost leader status (heartbeat timed out)")
 						n.isLeader.Set(0)
 						n.barrier(&LeaderRevoked{})
 					}
