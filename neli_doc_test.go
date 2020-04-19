@@ -1,6 +1,7 @@
 package goneli
 
 import (
+	"log"
 	"testing"
 	"time"
 
@@ -11,7 +12,35 @@ import (
 )
 
 func Example() {
-	// A logger.
+	// Configure Neli.
+	config := Config{
+		KafkaConfig: KafkaConfigMap{
+			"bootstrap.servers": "localhost:9092",
+		},
+	}
+
+	// Create a new Neli curator.
+	neli, err := New(config)
+	if err != nil {
+		panic(err)
+	}
+
+	// Starts a goroutine in the background, which will automatically terminate when Neli is closed.
+	neli.Background(func() {
+		log.Printf("Do important leader stuff")
+		time.Sleep(100 * time.Millisecond)
+	})
+
+	// Blocks until Neli is closed.
+	neli.Await()
+}
+
+func TestExample(t *testing.T) {
+	check.RunTargetted(t, Example)
+}
+
+func Example_lowLevel() {
+	// A custom logger.
 	log := logrus.StandardLogger()
 	log.SetLevel(logrus.TraceLevel)
 
@@ -64,6 +93,6 @@ func Example() {
 	neli.Await()
 }
 
-func TestExample(t *testing.T) {
-	check.RunTargetted(t, Example)
+func TestExample_lowLevel(t *testing.T) {
+	check.RunTargetted(t, Example_lowLevel)
 }
