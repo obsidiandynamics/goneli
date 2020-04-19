@@ -10,6 +10,8 @@ import (
 type Neli interface {
 	Close() error
 	IsLeader() bool
+	Pulse() (bool, error)
+	Deadline() concurrent.Deadline
 }
 
 type neli struct {
@@ -18,17 +20,20 @@ type neli struct {
 	consumer     KafkaConsumer
 	pollDeadline concurrent.Deadline
 	isLeader     concurrent.AtomicCounter
+	eventHandler EventHandler
 }
 
-func New(config Config) (Neli, error) {
+func New(config Config, eventHandler EventHandler) (Neli, error) {
 	config.SetDefaults()
 	if err := config.Validate(); err != nil {
 		return nil, err
 	}
 	n := &neli{
-		config:   config,
-		scribe:   config.Scribe,
-		isLeader: concurrent.NewAtomicCounter(),
+		config:       config,
+		scribe:       config.Scribe,
+		isLeader:     concurrent.NewAtomicCounter(),
+		eventHandler: eventHandler,
+		pollDeadline: concurrent.NewDeadline(*config.MinPollInterval),
 	}
 
 	consumerConfigs := copyKafkaConfig(n.config.KafkaConfig)
@@ -40,7 +45,8 @@ func New(config Config) (Neli, error) {
 		return nil, err
 	}
 
-	defer n.cleanupFailedStart()
+	success := false
+	defer n.cleanupFailedStart(&success)
 
 	n.logger().T()("Creating Kafka consumer with config %v", &consumerConfigs)
 	c, err := n.config.KafkaConsumerProvider(&consumerConfigs)
@@ -62,45 +68,72 @@ func New(config Config) (Neli, error) {
 		return nil, err
 	}
 
+	success = true
 	return n, nil
 }
 
-func (h *neli) logger() scribe.StdLogAPI {
-	return h.scribe.Capture(h.scene())
+func (n *neli) logger() scribe.StdLogAPI {
+	return n.scribe.Capture(n.scene())
 }
 
-func (h *neli) scene() scribe.Scene {
-	return scribe.Scene{Fields: scribe.Fields{"name": h.config.Name}}
+func (n *neli) scene() scribe.Scene {
+	return scribe.Scene{Fields: scribe.Fields{"name": n.config.Name}}
 }
 
-func (h *neli) cleanupFailedStart() {
-	if h.consumer != nil {
-		h.consumer.Close()
+func (n *neli) cleanupFailedStart(success *bool) {
+	if *success {
+		return
+	}
+
+	if n.consumer != nil {
+		n.consumer.Close()
 	}
 }
 
-func (h *neli) IsLeader() bool {
-	return h.isLeader.GetInt() == 1
+func (n *neli) IsLeader() bool {
+	return n.isLeader.GetInt() == 1
 }
 
-func onAssigned(h *neli, assigned kafka.AssignedPartitions) {
-	h.logger().T()("Assigned partitions: %s", assigned)
+func (n *neli) Pulse() (bool, error) {
+	var error error
+	n.pollDeadline.TryRun(func() {
+		// Polling is just to indicate consumer liveness; we don't actually care about the messages consumed.
+		n.logger().T()("Polling... (is leader: %v)", n.IsLeader())
+		_, err := n.consumer.ReadMessage(*n.config.PollDuration)
+		if err != nil {
+			if isFatalError(err) {
+				error = err
+				n.logger().E()("Fatal error during poll: %v", err)
+			} else if !isTimedOutError(err) {
+				n.logger().W()("Retryable error during poll: %v", err)
+			}
+		}
+	})
+	return n.IsLeader(), error
+}
+
+func (n *neli) Deadline() concurrent.Deadline {
+	return n.pollDeadline
+}
+
+func onAssigned(n *neli, assigned kafka.AssignedPartitions) {
+	n.logger().T()("Assigned partitions: %s", assigned)
 	if containsPartition(assigned.Partitions, 0) {
-		h.isLeader.Set(1)
-		h.logger().I()("Elected as leader")
-		// h.eventHandler(&LeaderElected{newLeaderID})
+		n.isLeader.Set(1)
+		n.logger().I()("Elected as leader")
+		n.eventHandler(&LeaderElected{})
 	}
 }
 
-func onRevoked(h *neli, revoked kafka.RevokedPartitions) {
-	h.logger().T()("Revoked partitions: %s", revoked)
+func onRevoked(n *neli, revoked kafka.RevokedPartitions) {
+	n.logger().T()("Revoked partitions: %s", revoked)
 	if containsPartition(revoked.Partitions, 0) {
-		h.logger().I()("Lost leader status")
-		h.isLeader.Set(1)
-		// h.eventHandler(&LeaderRevoked{})
+		n.logger().I()("Lost leader status")
+		n.isLeader.Set(0)
+		n.eventHandler(&LeaderRevoked{})
 	}
 }
 
-func (h *neli) Close() error {
-	return h.consumer.Close()
+func (n *neli) Close() error {
+	return n.consumer.Close()
 }
