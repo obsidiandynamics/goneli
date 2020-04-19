@@ -29,7 +29,7 @@ func (fixtureOpts fixtures) create() (scribe.MockScribe, *consMock, Config, *tes
 		KafkaConsumerProvider: mockKafkaConsumerProvider(cons),
 		MinPollInterval:       Duration(1 * time.Millisecond),
 		PollDuration:          Duration(1 * time.Millisecond),
-		Scribe:                scribe.New(m.Loggers()),
+		Scribe:                scribe.New(m.Factories()),
 	}
 	config.Scribe.SetEnabled(scribe.All)
 

@@ -175,8 +175,7 @@ func (n *neli) PulseCtx(ctx context.Context) (isLeader bool, err error) {
 			return leader, err
 		}
 
-		timeRemaining := *n.config.MinPollInterval - n.pollDeadline.Elapsed()
-		timer := time.NewTimer(timeRemaining)
+		timer := time.NewTimer(n.pollDeadline.Remaining())
 		defer timer.Stop()
 		select {
 		case <-ctx.Done():
