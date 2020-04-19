@@ -13,7 +13,6 @@ import (
 	"context"
 	"fmt"
 	"strconv"
-	"strings"
 	"sync"
 	"time"
 
@@ -158,17 +157,17 @@ type heartbeat struct {
 	leaderName string
 }
 
-func parse(bytes []byte) heartbeat {
-	//TODO handle errors
-	fields := strings.Split(string(bytes), "~")
-	timestamp, _ := strconv.ParseInt(fields[0], 10, 64)
-	leaderName := fields[1]
-	return heartbeat{timestamp, leaderName}
-}
+// func parse(bytes []byte) heartbeat {
+// 	//TODO handle errors
+// 	fields := strings.Split(string(bytes), "~")
+// 	timestamp, _ := strconv.ParseInt(fields[0], 10, 64)
+// 	leaderName := fields[1]
+// 	return heartbeat{timestamp, leaderName}
+// }
 
 func (h heartbeat) format() []byte {
 	timestampStr := strconv.FormatInt(h.timestamp, 10)
-	return []byte(timestampStr + "~" + h.leaderName)
+	return []byte(timestampStr + "%" + h.leaderName)
 }
 
 func (n *neli) cleanupFailedStart(success *bool) {
@@ -326,7 +325,11 @@ func (n *neli) Deadline() concurrent.Deadline {
 func onAssigned(n *neli, assigned kafka.AssignedPartitions) {
 	n.logger().T()("Assigned partitions: %s", assigned)
 	if containsPartition(assigned.Partitions, 0) {
+		n.logger().I()("Elected as leader")
 		n.isAssigned.Set(1)
+		n.isLeader.Set(1)
+		n.lastReceived = time.Now()
+		n.barrier(&LeaderElected{})
 	}
 }
 
