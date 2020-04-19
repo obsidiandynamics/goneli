@@ -9,4 +9,5 @@ require (
 	github.com/sirupsen/logrus v1.5.0
 	github.com/stretchr/testify v1.5.1
 	gopkg.in/confluentinc/confluent-kafka-go.v1 v1.4.0
+	gopkg.in/errgo.v2 v2.1.0
 )

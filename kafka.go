@@ -33,8 +33,8 @@ func StandardKafkaConsumerProvider() KafkaConsumerProvider {
 }
 
 /*
- * Various helpers.
- */
+Various helpers.
+*/
 
 func toKafkaNativeConfig(conf *KafkaConfigMap) *kafka.ConfigMap {
 	result := kafka.ConfigMap{}

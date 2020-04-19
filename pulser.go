@@ -35,7 +35,7 @@ func (p *pulser) Await() error {
 	return p.Error()
 }
 
-type OnLeader func(neli Neli)
+type OnLeader func()
 
 func Pulse(neli Neli, onLeader OnLeader) (Pulser, error) {
 	err := validation.Errors{
@@ -64,6 +64,10 @@ func Pulse(neli Neli, onLeader OnLeader) (Pulser, error) {
 				return
 			}
 
+			if ctx.Err() == context.Canceled {
+				return
+			}
+
 			if err != nil {
 				p.err.Set(err)
 				return
@@ -71,7 +75,7 @@ func Pulse(neli Neli, onLeader OnLeader) (Pulser, error) {
 
 			// We hold leader status, invoke the callback.
 			if isLeader {
-				onLeader(neli)
+				onLeader()
 			}
 		}
 	}()

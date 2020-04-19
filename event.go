@@ -4,13 +4,15 @@ import (
 	"fmt"
 )
 
-// EventHandler is a callback function for handling goneli events.
+// EventHandler is a callback function for handling Neli events.
 type EventHandler func(e Event)
 
-// NopEventHandler is a no-op event handler.
-func NopEventHandler(e Event) {}
+// NopEventHandler returns a no-op event handler implementation.
+func NopEventHandler() EventHandler {
+	return func(e Event) {}
+}
 
-// Event encapsulates a goneli event.
+// Event encapsulates a Neli event.
 type Event interface {
 	fmt.Stringer
 }

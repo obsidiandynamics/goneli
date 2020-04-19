@@ -12,7 +12,9 @@ func TestDefaultKafkaConsumerProvider(t *testing.T) {
 	c := Config{}
 	c.SetDefaults()
 
-	cons, err := c.KafkaConsumerProvider(&KafkaConfigMap{})
+	cons, err := c.KafkaConsumerProvider(&KafkaConfigMap{
+		"session.timeout.ms": 1000,
+	})
 	assert.Nil(t, cons)
 	if assert.NotNil(t, err) {
 		assert.Contains(t, err.Error(), "Required property")

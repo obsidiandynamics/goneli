@@ -201,7 +201,7 @@ func TestBasicLeaderElectionAndRevocation(t *testing.T) {
 	require.Nil(t, err)
 
 	onLeaderCnt := concurrent.NewAtomicCounter()
-	p, err := Pulse(h, func(neli Neli) {
+	p, err := h.Background(func() {
 		onLeaderCnt.Inc()
 	})
 	require.Nil(t, err)
@@ -264,9 +264,8 @@ func TestBasicLeaderElectionAndRevocation(t *testing.T) {
 	assertNoError(t, p.Await)
 }
 
-/*
 func TestNonFatalErrorInReadMessage(t *testing.T) {
-	m, _, cons, config := fixtures{}.create()
+	m, cons, config, _ := fixtures{}.create()
 
 	cons.f.ReadMessage = func(m *consMock, timeout time.Duration) (*kafka.Message, error) {
 		return nil, kafka.NewError(kafka.ErrAllBrokersDown, "simulated", false)
@@ -274,310 +273,87 @@ func TestNonFatalErrorInReadMessage(t *testing.T) {
 
 	h, err := New(config)
 	require.Nil(t, err)
-	assertNoError(t, h.Start)
 
-	// Wait for the error to be logged
-	wait(t).UntilAsserted(m.ContainsEntries().
-		Having(scribe.LogLevel(scribe.Warn)).
-		Having(scribe.MessageContaining("Error during poll")).
-		Passes(scribe.CountAtLeast(1)))
-	assert.Equal(t, Running, h.State())
-
-	h.Stop()
-	assert.Nil(t, h.Await())
-}
-
-func TestNonFatalErrorInMarkQuery(t *testing.T) {
-	m, db, cons, config := fixtures{}.create()
-
-	db.f.Mark = func(m *dbMock, leaderID uuid.UUID) ([]OutboxRecord, error) {
-		return nil, check.ErrSimulated
-	}
-
-	h, err := New(config)
-	require.Nil(t, err)
-	assertNoError(t, h.Start)
-
-	// Induce leadership
-	cons.rebalanceEvents <- assignedPartitions(0)
-
-	// Wait for the error to be logged
-	wait(t).UntilAsserted(m.ContainsEntries().
-		Having(scribe.LogLevel(scribe.Warn)).
-		Having(scribe.MessageContaining("Error executing mark query")).
-		Passes(scribe.CountAtLeast(1)))
-	assert.Equal(t, Running, h.State())
-
-	h.Stop()
-	assert.Nil(t, h.Await())
-}
-
-func TestErrorInProduce(t *testing.T) {
-	prodRef := concurrent.NewAtomicReference()
-	produceError := concurrent.NewAtomicCounter(1) // 1=true, 0=false
-	m, db, cons, config := fixtures{producerMockSetup: func(pm *prodMock) {
-		pm.f.Produce = func(m *prodMock, msg *kafka.Message, deliveryChan chan kafka.Event) error {
-			if produceError.Get() == 1 {
-				return kafka.NewError(kafka.ErrFail, "simulated", false)
-			}
-			return nil
-		}
-		prodRef.Set(pm)
-	}}.create()
-
-	h, err := New(config)
-	require.Nil(t, err)
-	eh := &testEventHandler{}
-	h.SetEventHandler(eh.handler())
-	assertNoError(t, h.Start)
-
-	// Induce leadership
-	cons.rebalanceEvents <- assignedPartitions(0)
-	wait(t).UntilAsserted(isNotNil(prodRef.Get))
-	prod := prodRef.Get().(*prodMock)
-	prodRef.Set(nil)
-
-	// Mark one record
-	records := generateRecords(1, 0)
-	db.markedRecords <- records
-
-	// Wait for the error to be logged
-	wait(t).UntilAsserted(m.ContainsEntries().
-		Having(scribe.LogLevel(scribe.Warn)).
-		Having(scribe.MessageContaining("Error publishing record")).
-		Passes(scribe.CountAtLeast(1)))
-	wait(t).UntilAsserted(m.ContainsEntries().
-		Having(scribe.LogLevel(scribe.Warn)).
-		Having(scribe.MessageContaining("Refreshed leader ID")).
-		Passes(scribe.CountAtLeast(1)))
-	m.Reset()
-	assert.Equal(t, Running, h.State())
-	wait(t).UntilAsserted(isNotNil(prodRef.Get))
-	prod = prodRef.Get().(*prodMock)
-
-	// Resume normal production... error should clear but the record count should not go up, as
-	// there can only be one in-flight record for a given key
-	produceError.Set(0)
-	db.markedRecords <- records
-	wait(t).UntilAsserted(intEqual(1, h.InFlightRecords))
-	wait(t).UntilAsserted(func(t check.Tester) {
-		assert.ElementsMatch(t, h.InFlightRecordKeys(), []string{records[0].KafkaKey})
+	onLeaderCnt := concurrent.NewAtomicCounter()
+	p, err := h.Background(func() {
+		onLeaderCnt.Inc()
 	})
+	require.Nil(t, err)
 
-	if assert.GreaterOrEqual(t, eh.length(), 2) {
-		_ = eh.list()[0].(*LeaderElected)
-		_ = eh.list()[1].(*LeaderRefreshed)
-	}
+	// Wait for the error to be logged
+	wait(t).UntilAsserted(m.ContainsEntries().
+		Having(scribe.LogLevel(scribe.Warn)).
+		Having(scribe.MessageContaining("Recoverable error during poll")).
+		Passes(scribe.CountAtLeast(1)))
+	assert.Equal(t, Live, h.State())
 
-	// Feed successful delivery report for the first record
-	prod.events <- message(records[0], nil)
+	assertNoError(t, h.Close)
+	h.Await()
 
-	h.Stop()
-	assert.Nil(t, h.Await())
+	assertNoError(t, p.Await)
+	assertNoError(t, p.Error)
 }
 
-// Tests remarking by feeding through two records for the same key, forcing them to come through in sequence.
-// The first is published, but fails upon delivery, which raises the forceRemark flag.
-// As the second on is processed, the forceRemark flag raised by the first should be spotted, and a leader
-// refresh should occur.
-func TestReset(t *testing.T) {
-	prodRef := concurrent.NewAtomicReference()
-	lastPublished := concurrent.NewAtomicReference()
-	m, db, cons, config := fixtures{producerMockSetup: func(pm *prodMock) {
-		pm.f.Produce = func(m *prodMock, msg *kafka.Message, deliveryChan chan kafka.Event) error {
-			lastPublished.Set(msg)
-			return nil
-		}
-		prodRef.Set(pm)
-	}}.create()
+func TestFatalErrorInReadMessage(t *testing.T) {
+	m, cons, config, _ := fixtures{}.create()
+
+	cons.f.ReadMessage = func(m *consMock, timeout time.Duration) (*kafka.Message, error) {
+		return nil, kafka.NewError(kafka.ErrFatal, "simulated", true)
+	}
 
 	h, err := New(config)
 	require.Nil(t, err)
-	eh := &testEventHandler{}
-	h.SetEventHandler(eh.handler())
-	assertNoError(t, h.Start)
 
-	// Induce leadership
-	cons.rebalanceEvents <- assignedPartitions(0)
-	wait(t).UntilAsserted(isNotNil(prodRef.Get))
-	prod := prodRef.Get().(*prodMock)
-
-	// Mark two records for the same key
-	records := generateCyclicKeyedRecords(1, 2, 0)
-	db.markedRecords <- records
-
-	// Wait for the backlog to register
-	wait(t).UntilAsserted(intEqual(1, h.InFlightRecords))
-	wait(t).UntilAsserted(func(t check.Tester) {
-		if msg := lastPublished.Get(); assert.NotNil(t, msg) {
-			assert.Equal(t, records[0].KafkaValue, string(msg.(*kafka.Message).Value))
-		}
+	onLeaderCnt := concurrent.NewAtomicCounter()
+	p, err := h.Background(func() {
+		onLeaderCnt.Inc()
 	})
-
-	// Feed an error
-	prod.events <- message(records[0], check.ErrSimulated)
+	require.Nil(t, err)
 
 	// Wait for the error to be logged
 	wait(t).UntilAsserted(m.ContainsEntries().
-		Having(scribe.LogLevel(scribe.Warn)).
-		Having(scribe.MessageContaining("Delivery failed")).
+		Having(scribe.LogLevel(scribe.Error)).
+		Having(scribe.MessageContaining("Fatal error during poll")).
 		Passes(scribe.CountAtLeast(1)))
+	assert.Equal(t, Live, h.State())
 
-	wait(t).UntilAsserted(m.ContainsEntries().
-		Having(scribe.LogLevel(scribe.Warn)).
-		Having(scribe.MessageContaining("Refreshed leader ID")).
-		Passes(scribe.CountAtLeast(1)))
-	m.Reset()
-	assert.Equal(t, Running, h.State())
-	wait(t).UntilAsserted(isNotNil(prodRef.Get))
+	assertNoError(t, h.Close)
+	h.Await()
 
-	h.Stop()
-	assert.Nil(t, h.Await())
+	err = p.Await()
+	require.NotNil(t, err)
+	assert.Equal(t, "Fatal error: simulated", err.Error())
+
+	err = p.Error()
+	require.NotNil(t, err)
+	assert.Equal(t, "Fatal error: simulated", err.Error())
 }
 
-func TestErrorInPurgeAndResetQueries(t *testing.T) {
-	prodRef := concurrent.NewAtomicReference()
-	m, db, cons, config := fixtures{producerMockSetup: func(pm *prodMock) {
-		prodRef.Set(pm)
-	}}.create()
-
-	records := generateRecords(2, 0)
-	purgeError := concurrent.NewAtomicCounter(1) // 1=true, 0=false
-	resetError := concurrent.NewAtomicCounter(1) // 1=true, 0=false
-	db.f.Mark = func(m *dbMock, leaderID uuid.UUID) ([]OutboxRecord, error) {
-		if db.c.Mark.Get() == 0 {
-			return records, nil
-		}
-		return []OutboxRecord{}, nil
-	}
-	db.f.Purge = func(m *dbMock, id int64) (bool, error) {
-		if purgeError.Get() == 1 {
-			return false, check.ErrSimulated
-		}
-		return true, nil
-	}
-	db.f.Reset = func(m *dbMock, id int64) (bool, error) {
-		if resetError.Get() == 1 {
-			return false, check.ErrSimulated
-		}
-		return true, nil
-	}
+func TestClosePulser(t *testing.T) {
+	_, _, config, _ := fixtures{}.create()
 
 	h, err := New(config)
 	require.Nil(t, err)
-	assertNoError(t, h.Start)
 
-	// Induce leadership and await its registration
-	cons.rebalanceEvents <- assignedPartitions(0)
-	wait(t).UntilAsserted(isNotNil(prodRef.Get))
-	prod := prodRef.Get().(*prodMock)
-
-	wait(t).UntilAsserted(isTrue(h.IsLeader))
-	wait(t).UntilAsserted(intEqual(2, h.InFlightRecords))
-
-	// Feed successful delivery report for the first record
-	prod.events <- message(records[0], nil)
-
-	// Wait for the error to be logged
-	wait(t).UntilAsserted(m.ContainsEntries().
-		Having(scribe.LogLevel(scribe.Warn)).
-		Having(scribe.MessageContaining("Error executing purge query for record")).
-		Passes(scribe.CountAtLeast(1)))
-	m.Reset()
-	assert.Equal(t, Running, h.State())
-	assert.Equal(t, 2, h.InFlightRecords())
-
-	// Resume normal production... error should clear
-	purgeError.Set(0)
-	wait(t).UntilAsserted(intEqual(1, h.InFlightRecords))
-
-	// Feed failed delivery report for the first record
-	prodRef.Get().(*prodMock).events <- message(records[1], kafka.NewError(kafka.ErrFail, "simulated", false))
-
-	// Wait for the error to be logged
-	wait(t).UntilAsserted(m.ContainsEntries().
-		Having(scribe.LogLevel(scribe.Warn)).
-		Having(scribe.MessageContaining("Error executing reset query for record")).
-		Passes(scribe.CountAtLeast(1)))
-	m.Reset()
-	assert.Equal(t, Running, h.State())
-	assert.Equal(t, 1, h.InFlightRecords())
-
-	// Resume normal production... error should clear
-	resetError.Set(0)
-	wait(t).UntilAsserted(intEqual(0, h.InFlightRecords))
-
-	h.Stop()
-	assert.Nil(t, h.Await())
-}
-
-func TestIncompletePurgeAndResetQueries(t *testing.T) {
-	prodRef := concurrent.NewAtomicReference()
-	m, db, cons, config := fixtures{producerMockSetup: func(pm *prodMock) {
-		prodRef.Set(pm)
-	}}.create()
-
-	records := generateRecords(2, 0)
-	db.f.Mark = func(m *dbMock, leaderID uuid.UUID) ([]OutboxRecord, error) {
-		if db.c.Mark.Get() == 0 {
-			return records, nil
-		}
-		return []OutboxRecord{}, nil
-	}
-	db.f.Purge = func(m *dbMock, id int64) (bool, error) {
-		return false, nil
-	}
-	db.f.Reset = func(m *dbMock, id int64) (bool, error) {
-		return false, nil
-	}
-
-	h, err := New(config)
-	require.Nil(t, err)
-	assertNoError(t, h.Start)
-
-	// Induce leadership and await its registration
-	cons.rebalanceEvents <- assignedPartitions(0)
-	wait(t).UntilAsserted(isTrue(h.IsLeader))
-	wait(t).UntilAsserted(intEqual(2, h.InFlightRecords))
-	wait(t).UntilAsserted(isNotNil(prodRef.Get))
-	prod := prodRef.Get().(*prodMock)
-
-	// Feed successful delivery report for the first record
-	prod.events <- message(records[0], nil)
-
-	// Wait for the warning to be logged
-	wait(t).UntilAsserted(m.ContainsEntries().
-		Having(scribe.LogLevel(scribe.Warn)).
-		Having(scribe.MessageContaining("Did not purge record")).
-		Passes(scribe.CountAtLeast(1)))
-	m.Reset()
-	assert.Equal(t, Running, h.State())
-	wait(t).UntilAsserted(intEqual(1, h.InFlightRecords))
-
-	// Feed failed delivery report for the first record
-	prod.events <- message(records[1], kafka.NewError(kafka.ErrFail, "simulated", false))
-
-	// Wait for the warning to be logged
-	wait(t).UntilAsserted(m.ContainsEntries().
-		Having(scribe.LogLevel(scribe.Warn)).
-		Having(scribe.MessageContaining("Did not reset record")).
-		Passes(scribe.CountAtLeast(1)))
-	m.Reset()
-	assert.Equal(t, Running, h.State())
-	wait(t).UntilAsserted(intEqual(0, h.InFlightRecords))
-
-	h.Stop()
-	assert.Nil(t, h.Await())
-}
-
-func TestEnsureState(t *testing.T) {
-	check.ThatPanicsAsExpected(t, check.ErrorContaining("must not be false"), func() {
-		ensureState(false, "must not be false")
+	onLeaderCnt := concurrent.NewAtomicCounter()
+	p, err := h.Background(func() {
+		onLeaderCnt.Inc()
 	})
+	require.Nil(t, err)
 
-	ensureState(true, "must not be false")
+	p.Close()
+	assertNoError(t, p.Await)
+	assertNoError(t, p.Error)
+
+	assertNoError(t, h.Close)
+	h.Await()
 }
-*/
+
+func TestPulserWithError(t *testing.T) {
+	p, err := Pulse(nil, nil)
+	assert.Nil(t, p)
+	assert.NotNil(t, err)
+}
 
 func intEqual(expected int, intSupplier func() int) func(t check.Tester) {
 	return func(t check.Tester) {

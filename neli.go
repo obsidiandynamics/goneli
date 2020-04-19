@@ -21,6 +21,7 @@ type Neli interface {
 	Close() error
 	Await()
 	State() State
+	Background(onLeader OnLeader) (Pulser, error)
 }
 
 type neli struct {
@@ -51,7 +52,7 @@ const (
 var ErrNonLivePulse = fmt.Errorf("cannot pulse in non-live state")
 
 func New(config Config, eventHandler ...EventHandler) (Neli, error) {
-	eh := arity.SoleUntyped(NopEventHandler, eventHandler).(EventHandler)
+	eh := arity.SoleUntyped(NopEventHandler(), eventHandler).(EventHandler)
 
 	config.SetDefaults()
 	if err := config.Validate(); err != nil {
@@ -212,4 +213,8 @@ func (n *neli) Close() error {
 
 func (n *neli) Await() {
 	n.state.Await(concurrent.RefEqual(Closed), concurrent.Indefinitely)
+}
+
+func (n *neli) Background(onLeader OnLeader) (Pulser, error) {
+	return Pulse(n, onLeader)
 }
