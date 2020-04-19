@@ -95,7 +95,7 @@ func New(config Config, barrier ...Barrier) (Neli, error) {
 
 	producerConfigs := copyKafkaConfig(n.config.KafkaConfig)
 	err = setKafkaConfigs(producerConfigs, KafkaConfigMap{
-		"delivery.timeout.ms": 10000,
+		"delivery.timeout.ms": config.ReceiveDeadline.Milliseconds,
 		"linger.ms":           0,
 	})
 	if err != nil {
@@ -118,8 +118,6 @@ func New(config Config, barrier ...Barrier) (Neli, error) {
 			onAssigned(n, e)
 		case kafka.RevokedPartitions:
 			onRevoked(n, e)
-		default:
-			n.logger().I()("Consumer event %v (%T)", event, event)
 		}
 		return nil
 	})
@@ -143,7 +141,7 @@ func New(config Config, barrier ...Barrier) (Neli, error) {
 					n.logger().T()("Delivered message: %s %v", string(e.Value), e.TopicPartition.Error)
 				}
 			default:
-				n.logger().T()("Producer event %v (%T)", event, event)
+				n.logger().T()("Producer event: %v (%T)", event, event)
 			}
 		}
 	}()
@@ -177,10 +175,6 @@ func (n *neli) cleanupFailedStart(success *bool) {
 
 	if n.consumer != nil {
 		n.consumer.Close()
-	}
-
-	if n.producer != nil {
-		n.producer.Close()
 	}
 }
 
@@ -249,8 +243,6 @@ func (n *neli) PulseCtx(ctx context.Context) (isLeader bool, err error) {
 	}
 }
 
-const receiveDeadline = 5 * time.Second
-
 func (n *neli) tryPulse() (bool, error) {
 	var error error
 	n.pollDeadline.TryRun(func() {
@@ -274,7 +266,7 @@ func (n *neli) tryPulse() (bool, error) {
 				} else if !isTimedOutError(err) {
 					n.logger().W()("Recoverable error during poll: %v", err)
 				}
-				// n.logger().T()("Timed out: %v", err)
+				// n.logger().T()("Timed out: %v", err) //TODO
 				break
 			} else {
 				received = m
@@ -292,7 +284,7 @@ func (n *neli) tryPulse() (bool, error) {
 				}
 			} else {
 				if n.isLeader.Get() == 1 {
-					if elapsed := time.Now().Sub(n.lastReceived); elapsed > receiveDeadline {
+					if elapsed := time.Now().Sub(n.lastReceived); elapsed > *n.config.ReceiveDeadline {
 						n.logger().I()("Lost leader status (timed out)")
 						n.isLeader.Set(0)
 						n.barrier(&LeaderRevoked{})

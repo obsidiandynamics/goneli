@@ -15,11 +15,8 @@ func Example() {
 	// Create a new Neli curator.
 	neli, err := New(Config{
 		KafkaConfig: KafkaConfigMap{
-			"bootstrap.servers":    "localhost:9092",
-			"session.timeout.ms":   6000,
-			"max.poll.interval.ms": 6500,
+			"bootstrap.servers": "localhost:9092",
 		},
-		LeaderTopic: "mygroup.neli",
 	})
 	if err != nil {
 		panic(err)
