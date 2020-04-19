@@ -342,9 +342,9 @@ func TestLeaderElectionAndRevocation_timeoutAndReconnect(t *testing.T) {
 	// Starts off in a non-leader state
 	assert.Equal(t, false, n.IsLeader())
 
-	// Assign leadership via the rebalance listener and wait for the assignment to take effect
+	// Assign leadership via the rebalance listener and wait for the leader status to first be
+	// acquired, then lost shortly afterwards.
 	cons.rebalanceEvents <- assignedPartitions(0, 1, 2)
-	wait(t).UntilAsserted(isTrue(n.IsLeader))
 	wait(t).UntilAsserted(m.ContainsEntries().
 		Having(scribe.LogLevel(scribe.Info)).
 		Having(scribe.MessageEqual("Elected as leader")).
@@ -364,8 +364,20 @@ func TestLeaderElectionAndRevocation_timeoutAndReconnect(t *testing.T) {
 			_ = b.list()[1].(*LeaderRevoked)
 		}
 	})
+	m.Reset()
+	wait(t).UntilAsserted(isFalse(n.IsLeader))
 
-	//TODO also assert barrier events
+	// Pump a heartbeat through to reacquire leader status.
+	cons.messages <- &kafka.Message{}
+	wait(t).UntilAsserted(m.ContainsEntries().
+		Having(scribe.LogLevel(scribe.Info)).
+		Having(scribe.MessageEqual("Elected as leader (heartbeat received)")).
+		Passes(scribe.Count(1)))
+	wait(t).UntilAsserted(func(t check.Tester) {
+		if assert.Equal(t, 3, b.length()) {
+			_ = b.list()[2].(*LeaderElected)
+		}
+	})
 
 	assertNoError(t, n.Close)
 	n.Await()
