@@ -84,11 +84,11 @@ config := Config{
 barrier := func(e Event) {
   switch e.(type) {
   case *LeaderElected:
-    log.Infof("Received event: leader elected")
     // Initialise state.
+    log.Infof("Received event: leader elected")
   case *LeaderRevoked:
-    log.Infof("Received event: leader revoked")
     // Clean up any pending work.
+    log.Infof("Received event: leader revoked")
   }
 }
 
