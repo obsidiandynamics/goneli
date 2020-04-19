@@ -6,6 +6,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/obsidiandynamics/libstdgo/arity"
 	"github.com/obsidiandynamics/libstdgo/concurrent"
 	"github.com/obsidiandynamics/libstdgo/scribe"
 	"gopkg.in/confluentinc/confluent-kafka-go.v1/kafka"
@@ -47,7 +48,11 @@ const (
 	Closed
 )
 
-func New(config Config, eventHandler EventHandler) (Neli, error) {
+var ErrNonLivePulse = fmt.Errorf("cannot pulse in non-live state")
+
+func New(config Config, eventHandler ...EventHandler) (Neli, error) {
+	eh := arity.SoleUntyped(NopEventHandler, eventHandler).(EventHandler)
+
 	config.SetDefaults()
 	if err := config.Validate(); err != nil {
 		return nil, err
@@ -56,7 +61,7 @@ func New(config Config, eventHandler EventHandler) (Neli, error) {
 		config:       config,
 		scribe:       config.Scribe,
 		isLeader:     concurrent.NewAtomicCounter(),
-		eventHandler: eventHandler,
+		eventHandler: eh,
 		pollDeadline: concurrent.NewDeadline(*config.MinPollInterval),
 		state:        concurrent.NewAtomicReference(Live),
 	}
@@ -151,7 +156,7 @@ func (n *neli) tryPulse() (bool, error) {
 		defer n.stateMutex.Unlock()
 
 		if n.State() != Live {
-			error = fmt.Errorf("cannot pulse in non-live state")
+			error = ErrNonLivePulse
 			return
 		}
 

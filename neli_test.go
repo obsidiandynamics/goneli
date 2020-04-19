@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/obsidiandynamics/libstdgo/check"
+	"github.com/obsidiandynamics/libstdgo/concurrent"
 	"github.com/obsidiandynamics/libstdgo/scribe"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -96,7 +97,7 @@ func TestCorrectInitialisation(t *testing.T) {
 	assert.Contains(t, *givenConsumerConfig, "bootstrap.servers")
 	assert.Equal(t, 1, cons.c.Subscribe.GetInt())
 
-	assert.Nil(t, h.Close())
+	assertNoError(t, h.Close)
 	h.Await()
 	assert.Equal(t, Closed, h.State())
 
@@ -111,219 +112,117 @@ func TestConfigError(t *testing.T) {
 	assert.NotNil(t, err)
 }
 
-/*
-func TestErrorDuringDBInitialisation(t *testing.T) {
-	_, _, _, config := fixtures{}.create()
-
-	config.DatabaseBindingProvider = func(dataSource string, outboxTable string) (DatabaseBinding, error) {
-		return nil, check.ErrSimulated
-	}
-	h, err := New(config)
-	require.Nil(t, err)
-
-	assertErrorContaining(t, h.Start, "simulated")
-	assert.Equal(t, Created, h.State())
-}
-
 func TestErrorDuringConsumerInitialisation(t *testing.T) {
-	_, db, _, config := fixtures{}.create()
+	_, _, config, eh := fixtures{}.create()
 
 	config.KafkaConsumerProvider = func(conf *KafkaConfigMap) (KafkaConsumer, error) {
 		return nil, check.ErrSimulated
 	}
-	h, err := New(config)
-	require.Nil(t, err)
-
-	assertErrorContaining(t, h.Start, "simulated")
-	assert.Equal(t, Created, h.State())
-	assert.Equal(t, 1, db.c.Dispose.GetInt())
+	h, err := New(config, eh.handler())
+	require.NotNil(t, err)
+	assert.Contains(t, err.Error(), "simulated")
+	assert.Nil(t, h)
 }
 
 func TestErrorDuringConsumerConfiguration(t *testing.T) {
-	_, _, _, config := fixtures{}.create()
+	_, _, config, eh := fixtures{}.create()
 
-	config.BaseKafkaConfig = KafkaConfigMap{
+	config.KafkaConfig = KafkaConfigMap{
 		"group.id": "overridden_group",
 	}
-	h, err := New(config)
+	h, err := New(config, eh.handler())
 	require.NotNil(t, err)
-	assert.Contains(t, err.Error(), "Cannot override configuration 'group.id'")
+	assert.Contains(t, err.Error(), "cannot override configuration 'group.id'")
 	assert.Nil(t, h)
-}
-
-func TestErrorDuringProducerConfiguration(t *testing.T) {
-	_, _, _, config := fixtures{}.create()
-
-	config.ProducerKafkaConfig = KafkaConfigMap{
-		"enable.idempotence": false,
-	}
-	h, err := New(config)
-	require.NotNil(t, err)
-	assert.Contains(t, err.Error(), "Cannot override configuration 'enable.idempotence'")
-	assert.Nil(t, h)
-}
-
-func TestErrorDuringProducerInitialisation(t *testing.T) {
-	m, db, cons, config := fixtures{}.create()
-
-	config.KafkaProducerProvider = func(conf *KafkaConfigMap) (KafkaProducer, error) {
-		return nil, check.ErrSimulated
-	}
-	h, err := New(config)
-	require.Nil(t, err)
-
-	eh := &testEventHandler{}
-	h.SetEventHandler(eh.handler())
-	assertNoError(t, h.Start)
-
-	// Induce leadership and await
-	cons.rebalanceEvents <- assignedPartitions(0)
-	wait(t).Until(h.IsLeader)
-	wait(t).UntilAsserted(func(t check.Tester) {
-		assert.Equal(t, 1, eh.length())
-	})
-
-	// Wait for at least one message to be consumed.
-	wait(t).UntilAsserted(atLeast(1, cons.c.ReadMessage.GetInt))
-
-	m.Entries().
-		Having(scribe.LogLevel(scribe.Info)).
-		Having(scribe.MessageEqual("Starting background poller")).
-		Assert(t, scribe.Count(1))
-
-	wait(t).UntilAsserted(m.ContainsEntries().
-		Having(scribe.LogLevel(scribe.Error)).
-		Having(scribe.MessageEqual("Caught panic in send cell: simulated")).
-		Passes(scribe.Count(1)))
-
-	// Having detected a panic, it should self-destruct
-	assertErrorContaining(t, h.Await, "simulated")
-
-	assert.Equal(t, 1, db.c.Dispose.GetInt())
-	assert.Equal(t, 1, cons.c.Close.GetInt())
 }
 
 func TestErrorDuringSubscribe(t *testing.T) {
-	_, db, cons, config := fixtures{}.create()
+	_, cons, config, eh := fixtures{}.create()
 
-	h, err := New(config)
-	require.Nil(t, err)
 	cons.f.Subscribe = func(m *consMock, topic string, rebalanceCb kafka.RebalanceCb) error {
 		return check.ErrSimulated
 	}
-	eh := &testEventHandler{}
-	h.SetEventHandler(eh.handler())
 
-	assert.Equal(t, Created, h.State())
-
-	assertErrorContaining(t, h.Start, "simulated")
-	assert.Equal(t, Created, h.State())
-	assert.Equal(t, 1, db.c.Dispose.GetInt())
+	h, err := New(config, eh.handler())
+	require.NotNil(t, err)
+	assert.Contains(t, err.Error(), "simulated")
+	assert.Nil(t, h)
 	assert.Equal(t, 1, cons.c.Close.GetInt())
-	assert.Equal(t, 0, eh.length())
 }
 
-func TestUncaughtPanic_backgroundPoller(t *testing.T) {
-	m, _, cons, config := fixtures{}.create()
+func TestPulseNotLeader(t *testing.T) {
+	_, _, config, eh := fixtures{}.create()
 
-	cons.f.ReadMessage = func(m *consMock, timeout time.Duration) (*kafka.Message, error) {
-		return nil, kafka.NewError(kafka.ErrFatal, "simulated", true)
-	}
-
-	h, err := New(config)
+	h, err := New(config, eh.handler())
 	require.Nil(t, err)
-	eh := &testEventHandler{}
-	h.SetEventHandler(eh.handler())
-	assertNoError(t, h.Start)
 
-	// Wait for at least one cycle before stopping
-	wait(t).UntilAsserted(atLeast(1, cons.c.ReadMessage.GetInt))
+	isLeader, err := h.Pulse(1 * time.Millisecond)
+	assert.False(t, isLeader)
+	assert.Nil(t, err)
 
-	// Having detected a panic, it should self-destruct
-	assertErrorContaining(t, h.Await, "simulated")
-	assert.Equal(t, 0, eh.length())
-
-	t.Log(m.Entries().List())
-	m.Entries().
-		Having(scribe.LogLevel(scribe.Info)).
-		Having(scribe.MessageEqual("Starting background poller")).
-		Assert(t, scribe.Count(1))
-
-	m.Entries().
-		Having(scribe.LogLevel(scribe.Error)).
-		Having(scribe.MessageEqual("Caught panic in background poller: Fatal error: simulated")).
-		Assert(t, scribe.Count(1))
-
-	m.Entries().
-		Having(scribe.LogLevel(scribe.Trace)).
-		Having(scribe.MessageEqual("Polling... (leader ID: <nil>)")).
-		Assert(t, scribe.Count(1))
+	assertNoError(t, h.Close)
+	h.Await()
 }
 
-func TestUncaughtPanic_backgroundDeliveryHandler(t *testing.T) {
-	prodRef := concurrent.NewAtomicReference()
-	m, db, cons, config := fixtures{producerMockSetup: func(prodMock *prodMock) {
-		prodRef.Set(prodMock)
-	}}.create()
+func TestPulseAfterClose(t *testing.T) {
+	_, _, config, eh := fixtures{}.create()
 
-	db.f.Reset = func(m *dbMock, id int64) (bool, error) {
-		panic(check.ErrSimulated)
-	}
-
-	h, err := New(config)
+	h, err := New(config, eh.handler())
 	require.Nil(t, err)
-	assertNoError(t, h.Start)
 
-	// Induce leadership and await
-	cons.rebalanceEvents <- assignedPartitions(0)
-	wait(t).Until(h.IsLeader)
+	assertNoError(t, h.Close)
+	h.Await()
 
-	// Feed a delivery event to cause a DB reset query
-	wait(t).UntilAsserted(isNotNil(prodRef.Get))
-	prodRef.Get().(*prodMock).events <- message(OutboxRecord{ID: 777}, check.ErrSimulated)
-
-	// Having detected a panic, it should self-destruct
-	assertErrorContaining(t, h.Await, "simulated")
-
-	t.Log(m.Entries().List())
-	m.Entries().
-		Having(scribe.LogLevel(scribe.Info)).
-		Having(scribe.MessageEqual("Starting background delivery handler")).
-		Assert(t, scribe.Count(1))
-
-	m.Entries().
-		Having(scribe.LogLevel(scribe.Error)).
-		Having(scribe.MessageEqual("Caught panic in background delivery handler: simulated")).
-		Assert(t, scribe.Count(1))
+	isLeader, err := h.Pulse(1 * time.Millisecond)
+	assert.False(t, isLeader)
+	assert.Equal(t, err, ErrNonLivePulse)
 }
 
-func TestBasicLeadershipElectionAndRevocation(t *testing.T) {
-	m, _, cons, config := fixtures{}.create()
+func TestDeadline(t *testing.T) {
+	_, _, config, eh := fixtures{}.create()
 
-	h, err := New(config)
+	h, err := New(config, eh.handler())
 	require.Nil(t, err)
-	eh := &testEventHandler{}
-	h.SetEventHandler(eh.handler())
-	assertNoError(t, h.Start)
+
+	assert.Equal(t, h.Deadline().Last(), time.Unix(0, 0))
+	isLeader, err := h.Pulse(1 * time.Millisecond)
+	assert.False(t, isLeader)
+	assert.Nil(t, err)
+	assert.NotEqual(t, h.Deadline().Last(), time.Unix(0, 0))
+
+	assertNoError(t, h.Close)
+	h.Await()
+}
+
+func TestBasicLeaderElectionAndRevocation(t *testing.T) {
+	m, cons, config, eh := fixtures{}.create()
+
+	h, err := New(config, eh.handler())
+	require.Nil(t, err)
+
+	onLeaderCnt := concurrent.NewAtomicCounter()
+	p, err := Pulse(h, func(neli Neli) {
+		onLeaderCnt.Inc()
+	})
+	require.Nil(t, err)
 
 	// Starts off in a non-leader state
 	assert.Equal(t, false, h.IsLeader())
-	assert.Nil(t, h.LeaderID())
 
 	// Assign leadership via the rebalance listener and wait for the assignment to take effect
 	cons.rebalanceEvents <- assignedPartitions(0, 1, 2)
 	wait(t).UntilAsserted(isTrue(h.IsLeader))
 	wait(t).UntilAsserted(m.ContainsEntries().
 		Having(scribe.LogLevel(scribe.Info)).
-		Having(scribe.MessageEqual(fmt.Sprintf("Elected as leader, ID: %s", h.LeaderID()))).
+		Having(scribe.MessageEqual("Elected as leader")).
 		Passes(scribe.Count(1)))
 	m.Reset()
 	wait(t).UntilAsserted(func(t check.Tester) {
 		if assert.Equal(t, 1, eh.length()) {
-			e := eh.list()[0].(*LeaderElected)
-			assert.Equal(t, e.LeaderID(), *(h.LeaderID()))
+			_ = eh.list()[0].(*LeaderElected)
 		}
 	})
+	wait(t).UntilAsserted(atLeast(1, onLeaderCnt.GetInt))
 
 	// Revoke some partitions, but not containing leader partition (0)... check that still leader
 	cons.rebalanceEvents <- revokedPartitions(1)
@@ -343,14 +242,6 @@ func TestBasicLeadershipElectionAndRevocation(t *testing.T) {
 		Having(scribe.LogLevel(scribe.Info)).
 		Having(scribe.MessageEqual("Lost leader status")).
 		Passes(scribe.Count(1)))
-	wait(t).UntilAsserted(m.ContainsEntries().
-		Having(scribe.LogLevel(scribe.Debug)).
-		Having(scribe.MessageEqual("Shutting down send battery")).
-		Passes(scribe.Count(1)))
-	wait(t).UntilAsserted(m.ContainsEntries().
-		Having(scribe.LogLevel(scribe.Debug)).
-		Having(scribe.MessageEqual("Send battery terminated")).
-		Passes(scribe.Count(1)))
 	m.Reset()
 	wait(t).UntilAsserted(func(t check.Tester) {
 		if assert.Equal(t, 2, eh.length()) {
@@ -368,293 +259,12 @@ func TestBasicLeadershipElectionAndRevocation(t *testing.T) {
 	assert.False(t, h.IsLeader())
 	assert.Equal(t, 2, eh.length())
 
-	h.Stop()
-	assert.Nil(t, h.Await())
+	assertNoError(t, h.Close)
+	h.Await()
+	assertNoError(t, p.Await)
 }
 
-func TestMetrics(t *testing.T) {
-	prodRef := concurrent.NewAtomicReference()
-	m, _, cons, config := fixtures{producerMockSetup: func(prodMock *prodMock) {
-		prodRef.Set(prodMock)
-	}}.create()
-	config.Limits.MinMetricsInterval = Duration(1 * time.Millisecond)
-
-	h, err := New(config)
-	require.Nil(t, err)
-	eh := &testEventHandler{}
-	h.SetEventHandler(eh.handler())
-	assertNoError(t, h.Start)
-
-	// Induce leadership and wait for the leadership event
-	cons.rebalanceEvents <- assignedPartitions(0)
-	wait(t).UntilAsserted(isNotNil(prodRef.Get))
-	wait(t).UntilAsserted(func(t check.Tester) {
-		assert.Equal(t, 1, eh.length())
-	})
-
-	wait(t).UntilAsserted(func(t check.Tester) {
-		backlogRecords := generateRecords(1, 0)
-		deliverAll(backlogRecords, nil, prodRef.Get().(*prodMock).events)
-		if assert.GreaterOrEqual(t, eh.length(), 2) {
-			e := eh.list()[1].(*MeterRead)
-			if stats := e.Stats(); assert.NotNil(t, stats) {
-				assert.Equal(t, stats.Name, "throughput")
-			}
-		}
-	})
-	wait(t).UntilAsserted(m.ContainsEntries().
-		Having(scribe.LogLevel(scribe.Debug)).
-		Having(scribe.MessageContaining("throughput")).
-		Passes(scribe.CountAtLeast(1)))
-
-	h.Stop()
-	assert.Nil(t, h.Await())
-}
-
-func TestHandleNonMessageEvent(t *testing.T) {
-	prodRef := concurrent.NewAtomicReference()
-	m, _, cons, config := fixtures{producerMockSetup: func(prodMock *prodMock) {
-		prodRef.Set(prodMock)
-	}}.create()
-	config.Limits.MinMetricsInterval = Duration(1 * time.Millisecond)
-
-	h, err := New(config)
-	require.Nil(t, err)
-	eh := &testEventHandler{}
-	h.SetEventHandler(eh.handler())
-	assertNoError(t, h.Start)
-
-	// Induce leadership and wait for the leadership event
-	cons.rebalanceEvents <- assignedPartitions(0)
-	wait(t).UntilAsserted(isNotNil(prodRef.Get))
-	prod := prodRef.Get().(*prodMock)
-	wait(t).UntilAsserted(func(t check.Tester) {
-		assert.Equal(t, 1, eh.length())
-	})
-
-	prod.events <- kafka.NewError(kafka.ErrAllBrokersDown, "brokers down", false)
-
-	wait(t).UntilAsserted(m.ContainsEntries().
-		Having(scribe.LogLevel(scribe.Info)).
-		Having(scribe.MessageContaining("Observed event: brokers down")).
-		Passes(scribe.CountAtLeast(1)))
-
-	h.Stop()
-	assert.Nil(t, h.Await())
-}
-
-func TestThrottleKeys(t *testing.T) {
-	prod := concurrent.NewAtomicReference()
-	lastPublished := concurrent.NewAtomicReference()
-	m, db, cons, config := fixtures{producerMockSetup: func(pm *prodMock) {
-		pm.f.Produce = func(m *prodMock, msg *kafka.Message, deliveryChan chan kafka.Event) error {
-			lastPublished.Set(msg)
-			return nil
-		}
-		prod.Set(pm)
-	}}.create()
-
-	h, err := New(config)
-	require.Nil(t, err)
-	eh := &testEventHandler{}
-	h.SetEventHandler(eh.handler())
-	assertNoError(t, h.Start)
-
-	// Starts off with no backlog.
-	assert.Equal(t, 0, h.InFlightRecords())
-
-	// Induce leadership and wait until a producer has been spawned.
-	cons.rebalanceEvents <- assignedPartitions(0)
-	wait(t).UntilAsserted(isNotNil(prod.Get))
-
-	const backlog = 10
-	backlogRecords := generateCyclicKeyedRecords(1, backlog, 0)
-	db.markedRecords <- backlogRecords
-
-	// Even though we pushed several records through, they all had a common key, so only one should
-	// should be published.
-	wait(t).UntilAsserted(intEqual(1, h.InFlightRecords))
-	assert.True(t, h.IsLeader()) // should definitely be leader by now
-	wait(t).UntilAsserted(intEqual(1, prod.Get().(*prodMock).c.Produce.GetInt))
-	msg := lastPublished.Get().(*kafka.Message)
-	assert.Equal(t, msg.Value, []byte(backlogRecords[0].KafkaValue))
-	assert.ElementsMatch(t, h.InFlightRecordKeys(), []string{backlogRecords[0].KafkaKey})
-
-	// Drain the in-flight record... another one should then be published.
-	deliverAll(backlogRecords[0:1], nil, prod.Get().(*prodMock).events)
-	wait(t).UntilAsserted(func(t check.Tester) {
-		msg := lastPublished.Get()
-		if assert.NotNil(t, msg) {
-			assert.Equal(t, msg.(*kafka.Message).Value, []byte(backlogRecords[1].KafkaValue))
-		}
-	})
-
-	// Drain the backlog by feeding in delivery confirmations one at a time.
-	for i := 1; i < backlog; i++ {
-		wait(t).UntilAsserted(intEqual(1, h.InFlightRecords))
-		wait(t).UntilAsserted(func(t check.Tester) {
-			msg := lastPublished.Get()
-			if assert.NotNil(t, msg) {
-				assert.Equal(t, []byte(backlogRecords[i].KafkaValue), msg.(*kafka.Message).Value)
-			}
-		})
-		deliverAll(backlogRecords[i:i+1], nil, prod.Get().(*prodMock).events)
-	}
-
-	// Revoke leadership...
-	cons.rebalanceEvents <- revokedPartitions(0)
-
-	// Wait for the backlog to drain... leadership status will be cleared when done.
-	wait(t).Until(check.Not(h.IsLeader))
-
-	wait(t).UntilAsserted(m.ContainsEntries().
-		Having(scribe.LogLevel(scribe.Debug)).
-		Having(scribe.MessageEqual("Shutting down send battery")).
-		Passes(scribe.Count(1)))
-	wait(t).UntilAsserted(m.ContainsEntries().
-		Having(scribe.LogLevel(scribe.Debug)).
-		Having(scribe.MessageEqual("Send battery terminated")).
-		Passes(scribe.Count(1)))
-	wait(t).UntilAsserted(m.ContainsEntries().
-		Having(scribe.LogLevel(scribe.Info)).
-		Having(scribe.MessageContaining("Lost leader status")).
-		Passes(scribe.Count(1)))
-
-	assert.Equal(t, backlog, db.c.Purge.GetInt())
-	assert.Equal(t, backlog, prod.Get().(*prodMock).c.Produce.GetInt())
-	assert.Equal(t, 0, h.InFlightRecords())
-
-	h.Stop()
-	assert.Nil(t, h.Await())
-}
-
-func TestPollDeadlineExceeded(t *testing.T) {
-	m, db, cons, config := fixtures{}.create()
-
-	config.Limits.DrainInterval = Duration(time.Millisecond)
-	config.Limits.MaxPollInterval = Duration(time.Millisecond)
-	h, err := New(config)
-	require.Nil(t, err)
-	eh := &testEventHandler{}
-	h.SetEventHandler(eh.handler())
-	assertNoError(t, h.Start)
-
-	// Starts off with no backlog.
-	assert.Equal(t, 0, h.InFlightRecords())
-
-	// Induce leadership and wait until a producer has been spawned.
-	cons.rebalanceEvents <- assignedPartitions(0)
-
-	db.markedRecords <- generateCyclicKeyedRecords(1, 2, 0)
-
-	wait(t).UntilAsserted(m.ContainsEntries().
-		Having(scribe.LogLevel(scribe.Warn)).
-		Having(scribe.MessageContaining("Exceeded poll deadline")).
-		Passes(scribe.Count(1)))
-	wait(t).UntilAsserted(m.ContainsEntries().
-		Having(scribe.LogLevel(scribe.Debug)).
-		Having(scribe.MessageEqual("Shutting down send battery")).
-		Passes(scribe.Count(1)))
-	wait(t).UntilAsserted(m.ContainsEntries().
-		Having(scribe.LogLevel(scribe.Debug)).
-		Having(scribe.MessageEqual("Send battery terminated")).
-		Passes(scribe.Count(1)))
-
-	h.Stop()
-	assert.Nil(t, h.Await())
-}
-
-func TestQueueLimitExceeded(t *testing.T) {
-	m, db, cons, config := fixtures{}.create()
-
-	config.Limits.DrainInterval = Duration(time.Millisecond)
-	config.Limits.QueueTimeout = Duration(time.Millisecond)
-	h, err := New(config)
-	require.Nil(t, err)
-	eh := &testEventHandler{}
-	h.SetEventHandler(eh.handler())
-	assertNoError(t, h.Start)
-
-	// Starts off with no backlog.
-	assert.Equal(t, 0, h.InFlightRecords())
-
-	// Induce leadership and wait until a producer has been spawned.
-	cons.rebalanceEvents <- assignedPartitions(0)
-
-	db.markedRecords <- generateCyclicKeyedRecords(1, 2, 0)
-
-	wait(t).UntilAsserted(m.ContainsEntries().
-		Having(scribe.LogLevel(scribe.Warn)).
-		Having(scribe.MessageContaining("Exceeded message queueing deadline")).
-		Passes(scribe.Count(1)))
-	wait(t).UntilAsserted(m.ContainsEntries().
-		Having(scribe.LogLevel(scribe.Debug)).
-		Having(scribe.MessageEqual("Shutting down send battery")).
-		Passes(scribe.Count(1)))
-	wait(t).UntilAsserted(m.ContainsEntries().
-		Having(scribe.LogLevel(scribe.Debug)).
-		Having(scribe.MessageEqual("Send battery terminated")).
-		Passes(scribe.Count(1)))
-
-	h.Stop()
-	assert.Nil(t, h.Await())
-}
-
-func TestDrainInFlightRecords_failedDelivery(t *testing.T) {
-	prod := concurrent.NewAtomicReference()
-	lastPublished := concurrent.NewAtomicReference()
-	m, db, cons, config := fixtures{producerMockSetup: func(pm *prodMock) {
-		pm.f.Produce = func(m *prodMock, msg *kafka.Message, deliveryChan chan kafka.Event) error {
-			lastPublished.Set(msg)
-			return nil
-		}
-		prod.Set(pm)
-	}}.create()
-
-	h, err := New(config)
-	require.Nil(t, err)
-	assertNoError(t, h.Start)
-
-	// Starts off with no backlog
-	assert.Equal(t, 0, h.InFlightRecords())
-
-	// Induce leadership
-	cons.rebalanceEvents <- assignedPartitions(0)
-	wait(t).UntilAsserted(isNotNil(prod.Get))
-
-	// Generate a backlog
-	const backlog = 10
-	backlogRecords := generateRecords(backlog, 0)
-	db.markedRecords <- backlogRecords
-
-	// Wait for the backlog to register.
-	wait(t).UntilAsserted(intEqual(backlog, h.InFlightRecords))
-	wait(t).UntilAsserted(intEqual(backlog, prod.Get().(*prodMock).c.Produce.GetInt))
-	assert.True(t, h.IsLeader()) // should be leader by now
-
-	// Revoke leadership... this will start the backlog drain.
-	cons.rebalanceEvents <- revokedPartitions(0)
-
-	wait(t).Until(check.Not(h.IsLeader))
-
-	wait(t).UntilAsserted(m.ContainsEntries().
-		Having(scribe.LogLevel(scribe.Debug)).
-		Having(scribe.MessageEqual("Shutting down send battery")).
-		Passes(scribe.Count(1)))
-	wait(t).UntilAsserted(m.ContainsEntries().
-		Having(scribe.LogLevel(scribe.Debug)).
-		Having(scribe.MessageEqual("Send battery terminated")).
-		Passes(scribe.Count(1)))
-	wait(t).UntilAsserted(m.ContainsEntries().
-		Having(scribe.LogLevel(scribe.Info)).
-		Having(scribe.MessageContaining("Lost leader status")).
-		Passes(scribe.Count(1)))
-	assert.Equal(t, h.InFlightRecords(), 0)
-
-	h.Stop()
-	assert.Nil(t, h.Await())
-}
-
+/*
 func TestNonFatalErrorInReadMessage(t *testing.T) {
 	m, _, cons, config := fixtures{}.create()
 
@@ -967,6 +577,7 @@ func TestEnsureState(t *testing.T) {
 
 	ensureState(true, "must not be false")
 }
+*/
 
 func intEqual(expected int, intSupplier func() int) func(t check.Tester) {
 	return func(t check.Tester) {
@@ -1016,10 +627,6 @@ func assertNoError(t *testing.T, f func() error) {
 	require.Nil(t, err)
 }
 
-func newTimedOutError() kafka.Error {
-	return kafka.NewError(kafka.ErrTimedOut, "Timed out", false)
-}
-
 func generatePartitions(indexes ...int32) []kafka.TopicPartition {
 	parts := make([]kafka.TopicPartition, len(indexes))
 	for i, index := range indexes {
@@ -1035,57 +642,3 @@ func assignedPartitions(indexes ...int32) kafka.AssignedPartitions {
 func revokedPartitions(indexes ...int32) kafka.RevokedPartitions {
 	return kafka.RevokedPartitions{Partitions: generatePartitions(indexes...)}
 }
-
-func generateRecords(numRecords int, startID int) []OutboxRecord {
-	records := make([]OutboxRecord, numRecords)
-	now := time.Now()
-	for i := 0; i < numRecords; i++ {
-		records[i] = OutboxRecord{
-			ID:         int64(startID + i),
-			CreateTime: now,
-			KafkaTopic: "test_topic",
-			KafkaKey:   fmt.Sprintf("key-%x", i),
-			KafkaValue: fmt.Sprintf("value-%x", i),
-			KafkaHeaders: KafkaHeaders{
-				KafkaHeader{Key: "ID", Value: strconv.FormatInt(int64(startID+i), 10)},
-			},
-		}
-	}
-	return records
-}
-
-func generateCyclicKeyedRecords(numKeys int, numRecords int, startID int) []OutboxRecord {
-	records := make([]OutboxRecord, numRecords)
-	now := time.Now()
-	for i := 0; i < numRecords; i++ {
-		records[i] = OutboxRecord{
-			ID:         int64(startID + i),
-			CreateTime: now,
-			KafkaTopic: "test_topic",
-			KafkaKey:   fmt.Sprintf("key-%x", i%numKeys),
-			KafkaValue: fmt.Sprintf("value-%x", i),
-			KafkaHeaders: KafkaHeaders{
-				KafkaHeader{Key: "ID", Value: strconv.FormatInt(int64(startID+i), 10)},
-			},
-		}
-	}
-	return records
-}
-
-func message(record OutboxRecord, err error) *kafka.Message {
-	return &kafka.Message{
-		TopicPartition: kafka.TopicPartition{Topic: &record.KafkaTopic, Error: err},
-		Key:            []byte(record.KafkaKey),
-		Value:          []byte(record.KafkaValue),
-		Timestamp:      record.CreateTime,
-		TimestampType:  kafka.TimestampCreateTime,
-		Opaque:         record,
-	}
-}
-
-func deliverAll(records []OutboxRecord, err error, events chan kafka.Event) {
-	for _, record := range records {
-		events <- message(record, err)
-	}
-}
-*/

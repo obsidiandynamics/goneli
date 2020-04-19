@@ -7,6 +7,9 @@ import (
 // EventHandler is a callback function for handling goneli events.
 type EventHandler func(e Event)
 
+// NopEventHandler is a no-op event handler.
+func NopEventHandler(e Event) {}
+
 // Event encapsulates a goneli event.
 type Event interface {
 	fmt.Stringer

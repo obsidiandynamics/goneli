@@ -15,12 +15,6 @@ func Duration(d time.Duration) *time.Duration {
 	return &d
 }
 
-func defaultInt(i **int, def int) {
-	if *i == nil {
-		*i = &def
-	}
-}
-
 func defaultDuration(d **time.Duration, def time.Duration) {
 	if *d == nil {
 		*d = &def
