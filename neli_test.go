@@ -328,6 +328,7 @@ func TestLeaderElectionAndRevocation_nopBarrier(t *testing.T) {
 
 func TestLeaderElectionAndRevocation_timeoutAndReconnect(t *testing.T) {
 	m, cons, _, config, _ := fixtures{}.create()
+	config.ReceiveDeadline = 1 * time.Millisecond
 
 	n, err := New(config)
 	require.Nil(t, err)
