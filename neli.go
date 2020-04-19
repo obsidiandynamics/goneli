@@ -156,14 +156,6 @@ type heartbeat struct {
 	leaderName string
 }
 
-// func parse(bytes []byte) heartbeat {
-// 	//TODO handle errors
-// 	fields := strings.Split(string(bytes), "~")
-// 	timestamp, _ := strconv.ParseInt(fields[0], 10, 64)
-// 	leaderName := fields[1]
-// 	return heartbeat{timestamp, leaderName}
-// }
-
 func (h heartbeat) format() []byte {
 	timestampStr := strconv.FormatInt(h.timestamp, 10)
 	return []byte(timestampStr + "%" + h.leaderName)
@@ -286,7 +278,6 @@ func (n *neli) tryPulse() (bool, error) {
 					n.barrier(&LeaderElected{})
 				}
 			} else {
-				n.logger().I()("Last received %v", n.lastReceived)
 				// No messages were received during the last poll.
 				if n.isLeader.Get() == 1 {
 					// If we were previously the leeder, need to make sure that we are still receiving heartbeats.
