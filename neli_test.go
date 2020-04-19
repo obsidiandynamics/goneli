@@ -19,22 +19,27 @@ func wait(t check.Tester) check.Timesert {
 
 type fixtures struct{}
 
-func (fixtureOpts fixtures) create() (scribe.MockScribe, *consMock, Config, *testBarrier) {
+func (fixtureOpts fixtures) create() (scribe.MockScribe, *consMock, *prodMock, Config, *testBarrier) {
 	m := scribe.NewMock()
 
 	cons := &consMock{}
 	cons.fillDefaults()
 
+	prod := &prodMock{}
+	prod.fillDefaults()
+
 	config := Config{
 		KafkaConsumerProvider: mockKafkaConsumerProvider(cons),
-		MinPollInterval:       Duration(1 * time.Millisecond),
-		PollDuration:          Duration(1 * time.Millisecond),
+		KafkaProducerProvider: mockKafkaProducerProvider(prod),
 		Scribe:                scribe.New(m.Factories()),
 		LeaderTopic:           "test.topic",
+		MinPollInterval:       Duration(1 * time.Millisecond),
+		PollDuration:          Duration(1 * time.Millisecond),
+		ReceiveDeadline:       Duration(10 * time.Second),
 	}
 	config.Scribe.SetEnabled(scribe.All)
 
-	return m, cons, config, &testBarrier{}
+	return m, cons, prod, config, &testBarrier{}
 }
 
 type testBarrier struct {
@@ -65,9 +70,10 @@ func (c *testBarrier) length() int {
 }
 
 func TestCorrectInitialisation(t *testing.T) {
-	_, cons, config, b := fixtures{}.create()
+	_, cons, prod, config, b := fixtures{}.create()
 
 	var givenConsumerConfig *KafkaConfigMap
+	var givenProducerConfig *KafkaConfigMap
 	var givenLeaderTopic string
 
 	cons.f.Subscribe = func(m *consMock, topic string, rebalanceCb kafka.RebalanceCb) error {
@@ -77,6 +83,10 @@ func TestCorrectInitialisation(t *testing.T) {
 	config.KafkaConsumerProvider = func(conf *KafkaConfigMap) (KafkaConsumer, error) {
 		givenConsumerConfig = conf
 		return cons, nil
+	}
+	config.KafkaProducerProvider = func(conf *KafkaConfigMap) (KafkaProducer, error) {
+		givenProducerConfig = conf
+		return prod, nil
 	}
 	config.LeaderTopic = "test leader topic"
 	config.LeaderGroupID = "test leader group ID"
@@ -90,6 +100,7 @@ func TestCorrectInitialisation(t *testing.T) {
 
 	assert.Equal(t, config.LeaderTopic, givenLeaderTopic)
 	assert.Contains(t, *givenConsumerConfig, "bootstrap.servers")
+	assert.Contains(t, *givenProducerConfig, "linger.ms")
 	assert.Equal(t, 1, cons.c.Subscribe.GetInt())
 
 	assertNoError(t, n.Close)
@@ -97,6 +108,7 @@ func TestCorrectInitialisation(t *testing.T) {
 	assert.Equal(t, Closed, n.State())
 
 	assert.Equal(t, 1, cons.c.Close.GetInt())
+	assert.Equal(t, 1, prod.c.Close.GetInt())
 }
 
 func TestConfigError(t *testing.T) {
@@ -108,7 +120,7 @@ func TestConfigError(t *testing.T) {
 }
 
 func TestErrorDuringConsumerInitialisation(t *testing.T) {
-	_, _, config, b := fixtures{}.create()
+	_, _, _, config, b := fixtures{}.create()
 
 	config.KafkaConsumerProvider = func(conf *KafkaConfigMap) (KafkaConsumer, error) {
 		return nil, check.ErrSimulated
@@ -120,7 +132,7 @@ func TestErrorDuringConsumerInitialisation(t *testing.T) {
 }
 
 func TestErrorDuringConsumerConfiguration(t *testing.T) {
-	_, _, config, b := fixtures{}.create()
+	_, _, _, config, b := fixtures{}.create()
 
 	config.KafkaConfig = KafkaConfigMap{
 		"group.id": "overridden_group",
@@ -132,7 +144,7 @@ func TestErrorDuringConsumerConfiguration(t *testing.T) {
 }
 
 func TestErrorDuringSubscribe(t *testing.T) {
-	_, cons, config, b := fixtures{}.create()
+	_, cons, _, config, b := fixtures{}.create()
 
 	cons.f.Subscribe = func(m *consMock, topic string, rebalanceCb kafka.RebalanceCb) error {
 		return check.ErrSimulated
@@ -145,8 +157,33 @@ func TestErrorDuringSubscribe(t *testing.T) {
 	assert.Equal(t, 1, cons.c.Close.GetInt())
 }
 
+func TestErrorDuringProducerInitialisation(t *testing.T) {
+	_, cons, _, config, b := fixtures{}.create()
+
+	config.KafkaProducerProvider = func(conf *KafkaConfigMap) (KafkaProducer, error) {
+		return nil, check.ErrSimulated
+	}
+	n, err := New(config, b.barrier())
+	require.NotNil(t, err)
+	assert.Contains(t, err.Error(), "simulated")
+	assert.Nil(t, n)
+	assert.Equal(t, 1, cons.c.Close.GetInt())
+}
+
+func TestErrorDuringProducerConfiguration(t *testing.T) {
+	_, _, _, config, b := fixtures{}.create()
+
+	config.KafkaConfig = KafkaConfigMap{
+		"linger.ms": "overridden_linger",
+	}
+	n, err := New(config, b.barrier())
+	require.NotNil(t, err)
+	assert.Contains(t, err.Error(), "cannot override configuration 'linger.ms'")
+	assert.Nil(t, n)
+}
+
 func TestPulseNotLeader(t *testing.T) {
-	_, _, config, _ := fixtures{}.create()
+	_, _, _, config, _ := fixtures{}.create()
 
 	n, err := New(config)
 	require.Nil(t, err)
@@ -160,7 +197,7 @@ func TestPulseNotLeader(t *testing.T) {
 }
 
 func TestPulseAfterClose(t *testing.T) {
-	_, _, config, _ := fixtures{}.create()
+	_, _, _, config, _ := fixtures{}.create()
 
 	n, err := New(config)
 	require.Nil(t, err)
@@ -174,7 +211,7 @@ func TestPulseAfterClose(t *testing.T) {
 }
 
 func TestDeadline(t *testing.T) {
-	_, _, config, _ := fixtures{}.create()
+	_, _, _, config, _ := fixtures{}.create()
 
 	n, err := New(config)
 	require.Nil(t, err)
@@ -190,7 +227,7 @@ func TestDeadline(t *testing.T) {
 }
 
 func TestBasicLeaderElectionAndRevocation(t *testing.T) {
-	m, cons, config, b := fixtures{}.create()
+	m, cons, _, config, b := fixtures{}.create()
 
 	n, err := New(config, b.barrier())
 	require.Nil(t, err)
@@ -260,7 +297,7 @@ func TestBasicLeaderElectionAndRevocation(t *testing.T) {
 }
 
 func TestLeaderElectionAndRevocation_nopBarrier(t *testing.T) {
-	m, cons, config, _ := fixtures{}.create()
+	m, cons, _, config, _ := fixtures{}.create()
 
 	n, err := New(config)
 	require.Nil(t, err)
@@ -290,7 +327,7 @@ func TestLeaderElectionAndRevocation_nopBarrier(t *testing.T) {
 }
 
 func TestNonFatalErrorInReadMessage(t *testing.T) {
-	m, cons, config, _ := fixtures{}.create()
+	m, cons, _, config, _ := fixtures{}.create()
 
 	cons.f.ReadMessage = func(m *consMock, timeout time.Duration) (*kafka.Message, error) {
 		return nil, kafka.NewError(kafka.ErrAllBrokersDown, "simulated", false)
@@ -320,7 +357,7 @@ func TestNonFatalErrorInReadMessage(t *testing.T) {
 }
 
 func TestFatalErrorInReadMessage(t *testing.T) {
-	m, cons, config, _ := fixtures{}.create()
+	m, cons, _, config, _ := fixtures{}.create()
 
 	cons.f.ReadMessage = func(m *consMock, timeout time.Duration) (*kafka.Message, error) {
 		return nil, kafka.NewError(kafka.ErrFatal, "simulated", true)
@@ -355,7 +392,7 @@ func TestFatalErrorInReadMessage(t *testing.T) {
 }
 
 func TestClosePulser(t *testing.T) {
-	_, _, config, _ := fixtures{}.create()
+	_, _, _, config, _ := fixtures{}.create()
 
 	n, err := New(config)
 	require.Nil(t, err)

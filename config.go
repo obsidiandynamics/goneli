@@ -35,6 +35,7 @@ type Config struct {
 	Name                  string
 	PollDuration          *time.Duration
 	MinPollInterval       *time.Duration
+	ReceiveDeadline       *time.Duration
 }
 
 // Validate the Config, returning an error if invalid.
@@ -49,6 +50,7 @@ func (c Config) Validate() error {
 		validation.Field(&c.Name, validation.Required),
 		validation.Field(&c.PollDuration, validation.Required, validation.Min(1*time.Millisecond)),
 		validation.Field(&c.MinPollInterval, validation.Required, validation.Min(1*time.Millisecond)),
+		validation.Field(&c.ReceiveDeadline, validation.Required, validation.Min(1*time.Millisecond)),
 	)
 }
 
@@ -63,7 +65,8 @@ func (c Config) String() string {
 		", Scribe=", c.Scribe,
 		", Name=", c.Name,
 		", PollDuration=", c.PollDuration,
-		", MinPollInterval=", c.MinPollInterval, "]")
+		", MinPollInterval=", c.MinPollInterval,
+		", ReceiveDeadline=", c.ReceiveDeadline, "]")
 }
 
 // SetDefaults assigns the default values to optional fields.
@@ -76,6 +79,9 @@ func (c *Config) SetDefaults() {
 	}
 	if c.LeaderGroupID == "" {
 		c.LeaderGroupID = filepath.Base(os.Args[0])
+	}
+	if c.LeaderTopic == "" {
+		c.LeaderTopic = "neli." + c.LeaderGroupID
 	}
 	if c.KafkaConsumerProvider == nil {
 		c.KafkaConsumerProvider = StandardKafkaConsumerProvider()
@@ -92,6 +98,7 @@ func (c *Config) SetDefaults() {
 
 	defaultDuration(&c.PollDuration, 1*time.Millisecond)
 	defaultDuration(&c.MinPollInterval, 100*time.Millisecond)
+	defaultDuration(&c.ReceiveDeadline, 10*time.Second)
 }
 
 type stringGetter func() (string, error)
