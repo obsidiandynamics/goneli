@@ -1,8 +1,10 @@
 package goneli
 
 import (
+	"context"
 	"fmt"
 	"sync"
+	"time"
 
 	"github.com/obsidiandynamics/libstdgo/concurrent"
 	"github.com/obsidiandynamics/libstdgo/scribe"
@@ -12,7 +14,8 @@ import (
 // Neli is a curator for leader election.
 type Neli interface {
 	IsLeader() bool
-	Pulse() (bool, error)
+	Pulse(timeout time.Duration) (bool, error)
+	PulseCtx(ctx context.Context) (bool, error)
 	Deadline() concurrent.Deadline
 	Close() error
 	Await()
@@ -34,10 +37,10 @@ type neli struct {
 type State int
 
 const (
-	// Live — currently operational, with a live consumer client.
+	// Live — currently operational, with a live Kafka consumer subscription.
 	Live State = iota
 
-	// Closing — in the process of closing the underlying resources (Kafka consumer client).
+	// Closing — in the process of closing the underlying resources (such as the Kafka consumer client).
 	Closing
 
 	// Closed — has been completely disposed of.
@@ -116,7 +119,32 @@ func (n *neli) IsLeader() bool {
 	return n.isLeader.GetInt() == 1
 }
 
-func (n *neli) Pulse() (bool, error) {
+func (n *neli) Pulse(timeout time.Duration) (bool, error) {
+	ctx, cancel := concurrent.Timeout(context.Background(), timeout)
+	defer cancel()
+	return n.PulseCtx(ctx)
+}
+
+func (n *neli) PulseCtx(ctx context.Context) (bool, error) {
+	for {
+		leader, err := n.tryPulse()
+		if leader || err != nil {
+			return leader, err
+		}
+
+		timeRemaining := *n.config.MinPollInterval - n.pollDeadline.Elapsed()
+		timer := time.NewTimer(timeRemaining)
+		defer timer.Stop()
+		select {
+		case <-ctx.Done():
+			return false, nil
+		case <-timer.C:
+			continue
+		}
+	}
+}
+
+func (n *neli) tryPulse() (bool, error) {
 	var error error
 	n.pollDeadline.TryRun(func() {
 		n.stateMutex.Lock()
@@ -135,7 +163,7 @@ func (n *neli) Pulse() (bool, error) {
 				error = err
 				n.logger().E()("Fatal error during poll: %v", err)
 			} else if !isTimedOutError(err) {
-				n.logger().W()("Retryable error during poll: %v", err)
+				n.logger().W()("Recoverable error during poll: %v", err)
 			}
 		}
 	})

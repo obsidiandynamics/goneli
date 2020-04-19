@@ -15,7 +15,7 @@ func Example() {
 	log := logrus.StandardLogger()
 	log.SetLevel(logrus.TraceLevel)
 
-	// Configure NELI.
+	// Configure Neli.
 	config := Config{
 		KafkaConfig: KafkaConfigMap{
 			"bootstrap.servers": "localhost:9092",
@@ -23,32 +23,40 @@ func Example() {
 		Scribe: scribe.New(scribelogrus.Bind()),
 	}
 
-	// Create a new Neli curator.
-	neli, err := New(config, func(e Event) {
+	// Blocking handler of leader status updates. Used to initialise state upon leader acquisition, and to wrap up
+	// in-flight work before relinquishing leader status.
+	eventHandler := func(e Event) {
 		switch e.(type) {
 		case *LeaderElected:
 			log.Infof("Received event: leader elected")
 		case *LeaderRevoked:
 			log.Infof("Received event: leader revoked")
 		}
-	})
+	}
+
+	// Create a new Neli curator.
+	neli, err := New(config, eventHandler)
 	if err != nil {
 		panic(err)
 	}
 
-	// Pulsing is done in a separate goroutine.
+	// Pulsing is done in a separate goroutine. (We don't have to, but it's often practical to do so.)
 	go func() {
+		defer neli.Close()
+
 		for {
-			isLeader, err := neli.Pulse()
+			// Pulse our presence, allowing for some time to acquire leader status.
+			// Will return instantly if already leader.
+			isLeader, err := neli.Pulse(10 * time.Millisecond)
 			if err != nil {
 				panic(err)
 			}
 
+			// We hold leader status... let's act as one.
 			if isLeader {
-				log.Infof("Do leader stuff")
+				log.Infof("Do important leader stuff")
+				time.Sleep(100 * time.Millisecond)
 			}
-
-			time.Sleep(100 * time.Millisecond)
 		}
 	}()
 

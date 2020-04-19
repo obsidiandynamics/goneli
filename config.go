@@ -94,7 +94,7 @@ func (c *Config) SetDefaults() {
 	}
 
 	defaultDuration(&c.PollDuration, 1*time.Millisecond)
-	defaultDuration(&c.MinPollInterval, 1*time.Millisecond)
+	defaultDuration(&c.MinPollInterval, 100*time.Millisecond)
 }
 
 type stringGetter func() (string, error)
