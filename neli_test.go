@@ -1,69 +1,38 @@
 package goneli
 
 import (
+	"sync"
+	"testing"
 	"time"
 
 	"github.com/obsidiandynamics/libstdgo/check"
+	"github.com/obsidiandynamics/libstdgo/scribe"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+	"gopkg.in/confluentinc/confluent-kafka-go.v1/kafka"
 )
 
 func wait(t check.Tester) check.Timesert {
 	return check.Wait(t, 10*time.Second)
 }
 
-/*
-// Aggressive limits used for (fast) testing and without send concurrency to simplify assertions.
-func testLimits() Limits {
-	return Limits{
-		IOErrorBackoff:     Duration(1 * time.Millisecond),
-		PollDuration:       Duration(1 * time.Millisecond),
-		MinPollInterval:    Duration(1 * time.Millisecond),
-		MaxPollInterval:    Duration(60 * time.Second),
-		DrainInterval:      Duration(60 * time.Second),
-		QueueTimeout:       Duration(60 * time.Second),
-		MarkBackoff:        Duration(1 * time.Millisecond),
-		MaxInFlightRecords: Int(math.MaxInt64),
-		SendConcurrency:    Int(1),
-		SendBuffer:         Int(0),
-	}
-}
+type fixtures struct{}
 
-type fixtures struct {
-	producerMockSetup producerMockSetup
-}
-
-func (o *fixtures) setDefaults() {
-	if o.producerMockSetup == nil {
-		o.producerMockSetup = func(prodMock *prodMock) {}
-	}
-}
-
-type producerMockSetup func(prodMock *prodMock)
-
-func (fixtureOpts fixtures) create() (scribe.MockScribe, *dbMock, *consMock, Config) {
-	fixtureOpts.setDefaults()
+func (fixtureOpts fixtures) create() (scribe.MockScribe, *consMock, Config, *testEventHandler) {
 	m := scribe.NewMock()
-
-	db := &dbMock{}
-	db.fillDefaults()
 
 	cons := &consMock{}
 	cons.fillDefaults()
 
 	config := Config{
-		Limits:                  testLimits(),
-		Scribe:                  scribe.New(m.Loggers()),
-		DatabaseBindingProvider: mockDatabaseBindingProvider(db),
-		KafkaConsumerProvider:   mockKafkaConsumerProvider(cons),
-		KafkaProducerProvider: func(conf *KafkaConfigMap) (KafkaProducer, error) {
-			prod := &prodMock{}
-			prod.fillDefaults()
-			fixtureOpts.producerMockSetup(prod)
-			return prod, nil
-		},
+		KafkaConsumerProvider: mockKafkaConsumerProvider(cons),
+		MinPollInterval:       Duration(1 * time.Millisecond),
+		PollDuration:          Duration(1 * time.Millisecond),
+		Scribe:                scribe.New(m.Loggers()),
 	}
 	config.Scribe.SetEnabled(scribe.All)
 
-	return m, db, cons, config
+	return m, cons, config, &testEventHandler{}
 }
 
 type handler interface {
@@ -100,10 +69,8 @@ func (c *testEventHandler) length() int {
 }
 
 func TestCorrectInitialisation(t *testing.T) {
-	_, db, cons, config := fixtures{}.create()
+	_, cons, config, eh := fixtures{}.create()
 
-	var givenDataSource string
-	var givenOutboxTable string
 	var givenConsumerConfig *KafkaConfigMap
 	var givenLeaderTopic string
 
@@ -111,53 +78,40 @@ func TestCorrectInitialisation(t *testing.T) {
 		givenLeaderTopic = topic
 		return nil
 	}
-	config.DatabaseBindingProvider = func(dataSource string, outboxTable string) (DatabaseBinding, error) {
-		givenDataSource = dataSource
-		givenOutboxTable = outboxTable
-		return db, nil
-	}
 	config.KafkaConsumerProvider = func(conf *KafkaConfigMap) (KafkaConsumer, error) {
 		givenConsumerConfig = conf
 		return cons, nil
 	}
-	config.DataSource = "test data source"
-	config.OutboxTable = "test table name"
 	config.LeaderTopic = "test leader topic"
 	config.LeaderGroupID = "test leader group ID"
-	config.BaseKafkaConfig = KafkaConfigMap{
+	config.KafkaConfig = KafkaConfigMap{
 		"bootstrap.servers": "localhost:9092",
 	}
 
-	h, err := New(config)
+	h, err := New(config, eh.handler())
 	require.Nil(t, err)
-	assert.Equal(t, Created, h.State())
-	assertNoError(t, h.Start)
-	assert.Equal(t, Running, h.State())
+	assert.Equal(t, Live, h.State())
 
-	assert.Equal(t, config.DataSource, givenDataSource)
-	assert.Equal(t, config.OutboxTable, givenOutboxTable)
 	assert.Equal(t, config.LeaderTopic, givenLeaderTopic)
 	assert.Contains(t, *givenConsumerConfig, "bootstrap.servers")
 	assert.Equal(t, 1, cons.c.Subscribe.GetInt())
 
-	h.Stop()
-	assert.Nil(t, h.Await())
-	assert.Equal(t, Stopped, h.State())
+	assert.Nil(t, h.Close())
+	h.Await()
+	assert.Equal(t, Closed, h.State())
 
-	assert.Equal(t, 1, db.c.Dispose.GetInt())
 	assert.Equal(t, 1, cons.c.Close.GetInt())
 }
 
 func TestConfigError(t *testing.T) {
 	h, err := New(Config{
-		Limits: Limits{
-			IOErrorBackoff: Duration(-1),
-		},
-	})
+		MinPollInterval: Duration(0),
+	}, (&testEventHandler{}).handler())
 	assert.Nil(t, h)
 	assert.NotNil(t, err)
 }
 
+/*
 func TestErrorDuringDBInitialisation(t *testing.T) {
 	_, _, _, config := fixtures{}.create()
 
