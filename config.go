@@ -30,6 +30,7 @@ type Config struct {
 	LeaderTopic           string
 	LeaderGroupID         string
 	KafkaConsumerProvider KafkaConsumerProvider
+	KafkaProducerProvider KafkaProducerProvider
 	Scribe                scribe.Scribe
 	Name                  string
 	PollDuration          *time.Duration
@@ -43,6 +44,7 @@ func (c Config) Validate() error {
 		validation.Field(&c.LeaderTopic, validation.Required),
 		validation.Field(&c.LeaderGroupID, validation.Required),
 		validation.Field(&c.KafkaConsumerProvider, validation.NotNil),
+		validation.Field(&c.KafkaProducerProvider, validation.NotNil),
 		validation.Field(&c.Scribe, validation.NotNil),
 		validation.Field(&c.Name, validation.Required),
 		validation.Field(&c.PollDuration, validation.Required, validation.Min(1*time.Millisecond)),
@@ -57,6 +59,7 @@ func (c Config) String() string {
 		", LeaderTopic=", c.LeaderTopic,
 		", LeaderGroupID=", c.LeaderGroupID,
 		", KafkaConsumerProvider=", c.KafkaConsumerProvider,
+		", KafkaProducerProvider=", c.KafkaProducerProvider,
 		", Scribe=", c.Scribe,
 		", Name=", c.Name,
 		", PollDuration=", c.PollDuration,
@@ -71,14 +74,14 @@ func (c *Config) SetDefaults() {
 	if _, ok := c.KafkaConfig["bootstrap.servers"]; !ok {
 		c.KafkaConfig["bootstrap.servers"] = "localhost:9092"
 	}
-	if c.LeaderTopic == "" {
-		c.LeaderTopic = "__consumer_offsets"
-	}
 	if c.LeaderGroupID == "" {
 		c.LeaderGroupID = filepath.Base(os.Args[0])
 	}
 	if c.KafkaConsumerProvider == nil {
 		c.KafkaConsumerProvider = StandardKafkaConsumerProvider()
+	}
+	if c.KafkaProducerProvider == nil {
+		c.KafkaProducerProvider = StandardKafkaProducerProvider()
 	}
 	if c.Scribe == nil {
 		c.Scribe = scribe.New(scribe.StandardBinding())

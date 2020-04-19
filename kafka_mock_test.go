@@ -81,6 +81,69 @@ func mockKafkaConsumerProvider(m *consMock) func(conf *KafkaConfigMap) (KafkaCon
 	}
 }
 
+type prodMockFuncs struct {
+	Events  func(m *prodMock) chan kafka.Event
+	Produce func(m *prodMock, msg *kafka.Message, deliveryChan chan kafka.Event) error
+	Close   func(m *prodMock)
+}
+
+type prodMockCounts struct {
+	Events,
+	Produce,
+	Close concurrent.AtomicCounter
+}
+
+type prodMock struct {
+	events chan kafka.Event
+	f      prodMockFuncs
+	c      prodMockCounts
+}
+
+func (m *prodMock) Events() chan kafka.Event {
+	defer m.c.Events.Inc()
+	return m.f.Events(m)
+}
+
+func (m *prodMock) Produce(msg *kafka.Message, deliveryChan chan kafka.Event) error {
+	defer m.c.Produce.Inc()
+	return m.f.Produce(m, msg, deliveryChan)
+}
+
+func (m *prodMock) Close() {
+	defer m.c.Close.Inc()
+	m.f.Close(m)
+}
+
+func (m *prodMock) fillDefaults() {
+	if m.events == nil {
+		m.events = make(chan kafka.Event)
+	}
+	if m.f.Events == nil {
+		m.f.Events = func(m *prodMock) chan kafka.Event {
+			return m.events
+		}
+	}
+	if m.f.Produce == nil {
+		m.f.Produce = func(m *prodMock, msg *kafka.Message, deliveryChan chan kafka.Event) error {
+			return nil
+		}
+	}
+	if m.f.Close == nil {
+		m.f.Close = func(m *prodMock) {
+			close(m.events)
+		}
+	}
+	m.c.Events = concurrent.NewAtomicCounter()
+	m.c.Produce = concurrent.NewAtomicCounter()
+	m.c.Close = concurrent.NewAtomicCounter()
+}
+
+func mockKafkaProducerProvider(m *prodMock) func(conf *KafkaConfigMap) (KafkaProducer, error) {
+	return func(conf *KafkaConfigMap) (KafkaProducer, error) {
+		return m, nil
+	}
+}
+
 func newTimedOutError() kafka.Error {
 	return kafka.NewError(kafka.ErrTimedOut, "Timed out", false)
 }

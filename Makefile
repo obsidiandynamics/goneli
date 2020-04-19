@@ -1,6 +1,9 @@
-default: test
+default: build test
 
 all: test lint
+
+build: dirs
+	go build -race -o bin ./...
 
 test: dirs
 	go test ./... -race -count=1 -coverprofile=bin/coverage.out

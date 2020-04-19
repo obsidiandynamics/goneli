@@ -21,6 +21,23 @@ type KafkaConsumer interface {
 // KafkaConsumerProvider is a factory for creating KafkaConsumer instances.
 type KafkaConsumerProvider func(conf *KafkaConfigMap) (KafkaConsumer, error)
 
+// KafkaProducer specifies the methods of a minimal producer.
+type KafkaProducer interface {
+	Events() chan kafka.Event
+	Produce(msg *kafka.Message, deliveryChan chan kafka.Event) error
+	Close()
+}
+
+// KafkaProducerProvider is a factory for creating KafkaProducer instances.
+type KafkaProducerProvider func(conf *KafkaConfigMap) (KafkaProducer, error)
+
+// StandardKafkaProducerProvider returns a factory for creating a conventional KafkaProducer, backed by the real client API.
+func StandardKafkaProducerProvider() KafkaProducerProvider {
+	return func(conf *KafkaConfigMap) (KafkaProducer, error) {
+		return kafka.NewProducer(toKafkaNativeConfig(conf))
+	}
+}
+
 /*
 Standard provider implementations.
 */
