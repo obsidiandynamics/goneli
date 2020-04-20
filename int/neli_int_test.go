@@ -32,7 +32,7 @@ func getEnv(key string, def string) string {
 	return def
 }
 
-const waitTimeout = 90 * time.Second
+const waitTimeout = 900 * time.Second
 
 var logger = overlog.New(overlog.StandardFormat())
 var scr = scribe.New(overlog.Bind(logger))
