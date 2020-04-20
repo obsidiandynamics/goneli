@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
+	"sync"
 	"syscall"
 	"testing"
 	"time"
@@ -54,6 +55,7 @@ func test(t *testing.T, numNodes int, spawnInterval time.Duration) {
 	installSigQuitHandler()
 
 	ns := make([]Neli, numNodes)
+	nsMutex := &sync.Mutex{}
 	pulsers := make([]Pulser, numNodes)
 	// Start nodes at a set interval.
 	for i := 0; i < numNodes; i++ {
@@ -74,17 +76,22 @@ func test(t *testing.T, numNodes int, spawnInterval time.Duration) {
 			switch e.(type) {
 			case *LeaderElected:
 				scr.I()("Elected leader %s", config.Name)
-				assert.Equal(t, 1, countLeaders(ns))
+				assert.Equal(t, 1, countLeaders(ns, nsMutex))
 			case *LeaderRevoked:
 				scr.I()("Revoked leader %s", config.Name)
-				assert.Equal(t, 0, countLeaders(ns))
+				assert.Equal(t, 0, countLeaders(ns, nsMutex))
 			default:
 				scr.E()("Unexpected event %v (%T)", e)
 				assert.Fail(t, "Unexpected event")
 			}
 		})
 		require.Nil(t, err)
+
+		// The ns slice is also accessed from the barrier callback to perform a leader count assertion.
+		nsMutex.Lock()
 		ns[i] = n
+		nsMutex.Unlock()
+
 		pulser, err := n.Background(func() {})
 		require.Nil(t, err)
 		pulsers[i] = pulser
@@ -95,7 +102,7 @@ func test(t *testing.T, numNodes int, spawnInterval time.Duration) {
 
 	// Wait for a leader to have formed.
 	wait(t).UntilAsserted(func(t check.Tester) {
-		assert.Equal(t, 1, countLeaders(ns))
+		assert.Equal(t, 1, countLeaders(ns, nsMutex))
 	})
 
 	// Stop nodes in the order they were started.
@@ -117,7 +124,9 @@ func test(t *testing.T, numNodes int, spawnInterval time.Duration) {
 	scr.I()("Done")
 }
 
-func countLeaders(ns []Neli) int {
+func countLeaders(ns []Neli, nsMutex *sync.Mutex) int {
+	nsMutex.Lock()
+	defer nsMutex.Unlock()
 	leaders := 0
 	for _, n := range ns {
 		if n != nil && n.State() == Live && n.IsLeader() {

@@ -40,7 +40,7 @@ type neli struct {
 	consumer     KafkaConsumer
 	producer     KafkaProducer
 	pollDeadline concurrent.Deadline
-	lastReceived time.Time
+	lastReceived concurrent.AtomicCounter
 	isAssigned   concurrent.AtomicCounter
 	isLeader     concurrent.AtomicCounter
 	barrier      Barrier
@@ -77,6 +77,7 @@ func New(config Config, barrier ...Barrier) (Neli, error) {
 	n := &neli{
 		config:       config,
 		scribe:       config.Scribe,
+		lastReceived: concurrent.NewAtomicCounter(),
 		isAssigned:   concurrent.NewAtomicCounter(),
 		isLeader:     concurrent.NewAtomicCounter(),
 		barrier:      barrierArg,
@@ -276,7 +277,7 @@ func (n *neli) tryPulse() (bool, error) {
 			if received != nil {
 				// At least one message was received during the recent poll cycle.
 				n.logger().T()("Received: %v", received)
-				n.lastReceived = time.Now()
+				n.lastReceived.Set(time.Now().UnixNano())
 				if n.isLeader.Get() == 0 {
 					// If the leader status was previously revoked (due to a heartbeat timeout), reinstate
 					// leadership.
@@ -290,7 +291,8 @@ func (n *neli) tryPulse() (bool, error) {
 				if n.isLeader.Get() == 1 {
 					// If we were previously the leeder, need to make sure that we are still receiving heartbeats.
 					// This enables us to detect network partitions and broker failures.
-					if elapsed := time.Now().Sub(n.lastReceived); elapsed > *n.config.ReceiveDeadline {
+					lastReceived := time.Unix(0, n.lastReceived.Get())
+					if elapsed := time.Now().Sub(lastReceived); elapsed > *n.config.ReceiveDeadline {
 						n.logger().I()("Lost leader status (heartbeat timed out)")
 						n.isLeader.Set(0)
 						n.barrier(&LeaderRevoked{})
@@ -335,7 +337,7 @@ func onAssigned(n *neli, assigned kafka.AssignedPartitions) {
 		n.logger().I()("Elected as leader")
 		n.isAssigned.Set(1)
 		n.isLeader.Set(1)
-		n.lastReceived = time.Now()
+		n.lastReceived.Set(time.Now().UnixNano())
 		n.barrier(&LeaderElected{})
 	}
 }
