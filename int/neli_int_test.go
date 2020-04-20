@@ -18,11 +18,19 @@ import (
 )
 
 const (
-	testKafkaNamespace   = "neli_test"
-	testTopic            = testKafkaNamespace + ".topic"
-	testGroupID          = testKafkaNamespace + ".group"
-	testBootstrapServers = "localhost:9092"
+	testKafkaNamespace = "neli_test"
+	testTopic          = testKafkaNamespace + ".topic"
+	testGroupID        = testKafkaNamespace + ".group"
 )
+
+var testBootstrapServers = getEnv("GONELI_KAFKA_URL", "localhost:9092")
+
+func getEnv(key string, def string) string {
+	if val := os.Getenv(key); val != "" {
+		return val
+	}
+	return def
+}
 
 const waitTimeout = 90 * time.Second
 
