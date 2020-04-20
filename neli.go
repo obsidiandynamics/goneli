@@ -136,12 +136,12 @@ func New(config Config, barrier ...Barrier) (Neli, error) {
 			switch e := event.(type) {
 			case *kafka.Message:
 				if e.TopicPartition.Error != nil {
-					n.logger().W()("Error publishing message: %s %v", string(e.Value), e.TopicPartition.Error)
+					n.logger().W()("Error delivering message: %s %v", string(e.Value), e.TopicPartition.Error)
 				} else {
 					n.logger().T()("Delivered message: %s %v", string(e.Value), e.TopicPartition.Error)
 				}
 			default:
-				n.logger().T()("Producer event: %v (%T)", event, event)
+				n.logger().W()("Producer event: %v (%T)", event, event)
 			}
 		}
 	}()
@@ -266,7 +266,6 @@ func (n *neli) tryPulse() (bool, error) {
 				} else if !isTimedOutError(err) {
 					n.logger().W()("Recoverable error during poll: %v", err)
 				}
-				// n.logger().T()("Timed out: %v", err) //TODO
 				break
 			} else {
 				received = m
@@ -299,7 +298,7 @@ func (n *neli) tryPulse() (bool, error) {
 				}
 			}
 
-			n.producer.Produce(&kafka.Message{
+			err := n.producer.Produce(&kafka.Message{
 				TopicPartition: kafka.TopicPartition{
 					Topic:     &n.config.LeaderTopic,
 					Partition: 0,
@@ -309,6 +308,15 @@ func (n *neli) tryPulse() (bool, error) {
 					leaderName: n.config.Name,
 				}.format(),
 			}, nil)
+
+			if err != nil {
+				if isFatalError(err) {
+					n.logger().E()("Fatal error during heartbeat: %v", err)
+					error = err
+				} else {
+					n.logger().W()("Recoverable error during heartbeat: %v", err)
+				}
+			}
 		}
 	})
 	return n.IsLeader(), error

@@ -10,8 +10,8 @@ services:
 before_install:
   - |
     docker run --name kafka --rm -d -p 2181:2181 -p 9092:9092 \
-    -e KAFKA_ADVERTISED_LISTENERS=PLAINTEXT://localhost:9092 \
-    obsidiandynamics/kafka
+        -e KAFKA_ADVERTISED_LISTENERS=PLAINTEXT://localhost:9092 \
+        obsidiandynamics/kafka
   - go get -u -v all
 
 script:

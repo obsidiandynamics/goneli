@@ -21,6 +21,19 @@ func TestDefaultKafkaConsumerProvider(t *testing.T) {
 	}
 }
 
+func TestDefaultKafkaProducerProvider(t *testing.T) {
+	c := Config{}
+	c.SetDefaults()
+
+	prod, err := c.KafkaProducerProvider(&KafkaConfigMap{
+		"foo": "bar",
+	})
+	assert.Nil(t, prod)
+	if assert.NotNil(t, err) {
+		assert.Contains(t, err.Error(), "No such configuration property")
+	}
+}
+
 func TestGetString(t *testing.T) {
 	assert.Equal(t, "some-default", getString("some-default", func() (string, error) { return "", check.ErrSimulated }))
 	assert.Equal(t, "some-string", getString("some-default", func() (string, error) { return "some-string", nil }))
