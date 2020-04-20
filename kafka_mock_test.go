@@ -22,6 +22,7 @@ type consMockCounts struct {
 type consMock struct {
 	rebalanceCallback kafka.RebalanceCb
 	rebalanceEvents   chan kafka.Event
+	messages          chan *kafka.Message
 	f                 consMockFuncs
 	c                 consMockCounts
 }
@@ -55,6 +56,9 @@ func (m *consMock) fillDefaults() {
 	if m.rebalanceEvents == nil {
 		m.rebalanceEvents = make(chan kafka.Event)
 	}
+	if m.messages == nil {
+		m.messages = make(chan *kafka.Message)
+	}
 	if m.f.Subscribe == nil {
 		m.f.Subscribe = func(m *consMock, topic string, rebalanceCb kafka.RebalanceCb) error {
 			return nil
@@ -62,7 +66,12 @@ func (m *consMock) fillDefaults() {
 	}
 	if m.f.ReadMessage == nil {
 		m.f.ReadMessage = func(m *consMock, timeout time.Duration) (*kafka.Message, error) {
-			return nil, newTimedOutError()
+			select {
+			case message := <-m.messages:
+				return message, nil
+			default:
+				return nil, newTimedOutError()
+			}
 		}
 	}
 	if m.f.Close == nil {
