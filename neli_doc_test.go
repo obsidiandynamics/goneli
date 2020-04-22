@@ -27,10 +27,10 @@ func Example() {
 	// Starts a pulser Goroutine in the background, which will automatically terminate when Neli is closed.
 	p, _ := neli.Background(func() {
 		// An activity performed by the client application if it is the elected leader. This task should
-		// perform a small amount of work that is exclusively attributable to a leader, and return immediately. For as
-		// long as the associated Neli instance is the leader, this task will be invoked repeatedly; therefore, it should
-		// break down any long-running work into bite-sized chunks that can be safely performed without causing excessive
-		// blocking.
+		// perform a small amount of work that is exclusively attributable to a leader, and return immediately.
+		// For as long as the associated Neli instance is the leader, this task will be invoked repeatedly;
+		// therefore, it should break down any long-running work into bite-sized chunks that can be safely
+		// performed without causing excessive blocking.
 		log.Printf("Do important leader stuff")
 		time.Sleep(100 * time.Millisecond)
 	})
