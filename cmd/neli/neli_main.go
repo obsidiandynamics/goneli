@@ -10,17 +10,19 @@ import (
 
 func main() {
 	var leaderGroupID, leaderTopic, kafkaBoostrapServers string
-	flag.StringVar(&leaderGroupID, "leaderGroup", "goneli.group", "Leader group ID")
-	flag.StringVar(&leaderTopic, "leaderTopic", "goneli.topic", "Leader topic")
+	flag.StringVar(&leaderGroupID, "group", "goneli.group", "Leader group ID")
+	flag.StringVar(&leaderTopic, "topic", "goneli.topic", "Leader topic")
 	flag.StringVar(&kafkaBoostrapServers, "kafka", "localhost:9092", "Kafka bootstrap servers")
 	flag.Parse()
+	log.Printf("group: %s", leaderGroupID)
+	log.Printf("topic: %s", leaderTopic)
+	log.Printf("kafka: %s", kafkaBoostrapServers)
 
 	// Create a new Neli curator.
 	neli, err := goneli.New(goneli.Config{
 		KafkaConfig: goneli.KafkaConfigMap{
 			"bootstrap.servers":    kafkaBoostrapServers,
-			"session.timeout.ms":   6000,
-			"max.poll.interval.ms": 6500,
+			"max.poll.interval.ms": 60000,
 		},
 		LeaderGroupID:   leaderGroupID,
 		LeaderTopic:     leaderTopic,

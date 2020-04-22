@@ -24,3 +24,6 @@
 
 # Logs
 /log*
+
+# Broker certs
+/ca-*

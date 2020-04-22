@@ -43,6 +43,36 @@ func TestExample(t *testing.T) {
 	check.RunTargetted(t, Example)
 }
 
+func Example_secureBroker() {
+	// Connects to a secure broker over TLS, using SASL authentication.
+	neli, err := New(Config{
+		KafkaConfig: KafkaConfigMap{
+			"bootstrap.servers": "localhost:9092",
+			"security.protocol": "sasl_ssl",
+			"ssl.ca.location":   "ca-cert.pem",
+			"sasl.mechanism":    "SCRAM-SHA-256",
+			"sasl.username":     "user",
+			"sasl.password":     "secret",
+		},
+		LeaderGroupID: "my-app-name.group",
+		LeaderTopic:   "my-app-name.topic",
+	})
+	if err != nil {
+		panic(err)
+	}
+
+	p, _ := neli.Background(func() {
+		log.Printf("Do important leader stuff")
+		time.Sleep(100 * time.Millisecond)
+	})
+
+	panic(p.Await())
+}
+
+func TestExample_secureBroker(t *testing.T) {
+	check.RunTargetted(t, Example_secureBroker)
+}
+
 func Example_lowLevel() {
 	// Bootstrap a custom logger.
 	log := logrus.StandardLogger()
