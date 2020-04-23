@@ -10,18 +10,13 @@ import (
 	"github.com/obsidiandynamics/libstdgo/concurrent"
 )
 
-// MockLeaderStatus represents the leader status of the mock.
-type MockLeaderStatus int
+// mockLeaderStatus represents the leader status of the mock.
+type mockLeaderStatus int
 
 const (
-	// MockLeaderStatusAcquired — acquired state.
-	MockLeaderStatusAcquired MockLeaderStatus = iota
-
-	// MockLeaderStatusRevoked — revoked state.
-	MockLeaderStatusRevoked
-
-	// MockLeaderStatusFenced — fenced state.
-	MockLeaderStatusFenced
+	mockLeaderStatusAcquired mockLeaderStatus = iota
+	mockLeaderStatusRevoked
+	mockLeaderStatusFenced
 )
 
 type mockNeli struct {
@@ -37,8 +32,10 @@ type mockNeli struct {
 // Instead, leader status is assigned/revoked via the Transition method.
 type MockNeli interface {
 	Neli
-	Transition(state MockLeaderStatus)
 	PulseError(err error)
+	AcquireLeader()
+	RevokeLeader()
+	FenceLeader()
 }
 
 // MockConfig encapsulates the configuration for MockNeli.
@@ -76,23 +73,23 @@ func NewMock(config MockConfig, barrier ...Barrier) (MockNeli, error) {
 		pollDeadline:  concurrent.NewDeadline(*config.MinPollInterval),
 		barrier:       barrierArg,
 		runState:      concurrent.NewAtomicReference(Live),
-		currentStatus: concurrent.NewAtomicReference(MockLeaderStatusRevoked),
-		targetStatus:  concurrent.NewAtomicReference(MockLeaderStatusRevoked),
+		currentStatus: concurrent.NewAtomicReference(mockLeaderStatusRevoked),
+		targetStatus:  concurrent.NewAtomicReference(mockLeaderStatusRevoked),
 		pulseError:    concurrent.NewAtomicReference(),
 	}, nil
 }
 
-func (m *mockNeli) getCurrentStatus() MockLeaderStatus {
-	return m.currentStatus.Get().(MockLeaderStatus)
+func (m *mockNeli) getCurrentStatus() mockLeaderStatus {
+	return m.currentStatus.Get().(mockLeaderStatus)
 }
 
-func (m *mockNeli) getTargetStatus() MockLeaderStatus {
-	return m.targetStatus.Get().(MockLeaderStatus)
+func (m *mockNeli) getTargetStatus() mockLeaderStatus {
+	return m.targetStatus.Get().(mockLeaderStatus)
 }
 
 // IsLeader returns true if this MockNeli instance is currently the elected leader.
 func (m *mockNeli) IsLeader() bool {
-	return m.getCurrentStatus() == MockLeaderStatusAcquired
+	return m.getCurrentStatus() == mockLeaderStatusAcquired
 }
 
 // Pulse the MockNeli instance.
@@ -137,11 +134,11 @@ func (m *mockNeli) tryPulse() bool {
 		if m.getCurrentStatus() != m.getTargetStatus() {
 			m.currentStatus.Set(m.targetStatus.Get())
 			switch m.getTargetStatus() {
-			case MockLeaderStatusAcquired:
+			case mockLeaderStatusAcquired:
 				m.barrier(&LeaderAcquired{})
-			case MockLeaderStatusRevoked:
+			case mockLeaderStatusRevoked:
 				m.barrier(&LeaderRevoked{})
-			case MockLeaderStatusFenced:
+			case mockLeaderStatusFenced:
 				m.barrier(&LeaderFenced{})
 			}
 		}
@@ -176,12 +173,26 @@ func (m *mockNeli) Background(task LeaderTask) (Pulser, error) {
 	return pulse(m, task)
 }
 
-// Transition the leader status of this instance.
-func (m *mockNeli) Transition(targetStatus MockLeaderStatus) {
-	m.targetStatus.Set(targetStatus)
-}
-
 // PulseError simulates a one-off error on Pulse/PulseCtx.
 func (m *mockNeli) PulseError(err error) {
 	m.pulseError.Set(err)
+}
+
+func (m *mockNeli) transition(targetStatus mockLeaderStatus) {
+	m.targetStatus.Set(targetStatus)
+}
+
+// AcquireLeader initiates leader acquisition, which will be observed by the client upon its next call to Pulse().
+func (m *mockNeli) AcquireLeader() {
+	m.transition(mockLeaderStatusAcquired)
+}
+
+// RevokeLeader initiates leader revocation, which will be observed by the client upon its next call to Pulse().
+func (m *mockNeli) RevokeLeader() {
+	m.transition(mockLeaderStatusRevoked)
+}
+
+// FenceLeader initiates leader fencing, which will be observed by the client upon its next call to Pulse().
+func (m *mockNeli) FenceLeader() {
+	m.transition(mockLeaderStatusFenced)
 }
