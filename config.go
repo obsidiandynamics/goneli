@@ -42,8 +42,6 @@ type Config struct {
 func (c Config) Validate() error {
 	return validation.ValidateStruct(&c,
 		validation.Field(&c.KafkaConfig, validation.NotNil),
-		validation.Field(&c.LeaderTopic, validation.Required),
-		validation.Field(&c.LeaderGroupID, validation.Required),
 		validation.Field(&c.KafkaConsumerProvider, validation.NotNil),
 		validation.Field(&c.KafkaProducerProvider, validation.NotNil),
 		validation.Field(&c.Scribe, validation.NotNil),
@@ -69,6 +67,17 @@ func (c Config) String() string {
 		", ReceiveDeadline=", c.ReceiveDeadline, "]")
 }
 
+const (
+	// DefaultPollDuration is the default value of Config.PollDuration
+	DefaultPollDuration = 1 * time.Millisecond
+
+	// DefaultMinPollInterval is the default value of Config.MinPollInterval
+	DefaultMinPollInterval = 100 * time.Millisecond
+
+	// DefaultReceiveDeadline is the default value of Config.ReceiveDeadline
+	DefaultReceiveDeadline = 5 * time.Second
+)
+
 // SetDefaults assigns the default values to optional fields.
 func (c *Config) SetDefaults() {
 	if c.KafkaConfig == nil {
@@ -93,12 +102,12 @@ func (c *Config) SetDefaults() {
 		c.Scribe = scribe.New(scribe.StandardBinding())
 	}
 	if c.Name == "" {
-		c.Name = fmt.Sprintf("%s~%d~%d", getString("localhost", os.Hostname), os.Getpid(), time.Now().Unix())
+		c.Name = fmt.Sprintf("%s_%d_%d", getString("localhost", os.Hostname), os.Getpid(), time.Now().Unix())
 	}
 
-	defaultDuration(&c.PollDuration, 1*time.Millisecond)
-	defaultDuration(&c.MinPollInterval, 100*time.Millisecond)
-	defaultDuration(&c.ReceiveDeadline, 5*time.Second)
+	defaultDuration(&c.PollDuration, DefaultPollDuration)
+	defaultDuration(&c.MinPollInterval, DefaultMinPollInterval)
+	defaultDuration(&c.ReceiveDeadline, DefaultReceiveDeadline)
 }
 
 type stringGetter func() (string, error)

@@ -185,7 +185,7 @@ func (n *neli) IsLeader() bool {
 	return n.isLeader.GetInt() == 1
 }
 
-func (n *neli) IsAssigned() bool {
+func (n *neli) isPartitionZeroAssigned() bool {
 	return n.isAssigned.GetInt() == 1
 }
 
@@ -250,7 +250,7 @@ func (n *neli) tryPulse() (bool, error) {
 
 		// Polling is just to indicate consumer liveness; we don't actually care about the messages consumed.
 		var received *kafka.Message
-		n.logger().T()("Polling... (is assigned: %v, is leader: %v)", n.IsAssigned(), n.IsLeader())
+		n.logger().T()("Polling... (is assigned: %v, is leader: %v)", n.isPartitionZeroAssigned(), n.IsLeader())
 		for {
 			m, err := n.consumer.ReadMessage(*n.config.PollDuration)
 			if err != nil {
@@ -266,7 +266,7 @@ func (n *neli) tryPulse() (bool, error) {
 			}
 		}
 
-		if n.IsAssigned() {
+		if n.isPartitionZeroAssigned() {
 			if received != nil {
 				// At least one message was received during the recent poll cycle.
 				n.logger().T()("Received: %v", received)
