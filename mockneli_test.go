@@ -145,3 +145,11 @@ func TestMockPulseEventuallyLeader(t *testing.T) {
 	require.Equal(t, Closed, m.State())
 	m.Await()
 }
+
+func TestMockPulseError(t *testing.T) {
+	m, _ := NewMock(MockConfig{})
+	m.PulseError(check.ErrSimulated)
+	isLeader, err := m.Pulse(1 * time.Millisecond)
+	require.False(t, isLeader)
+	require.Equal(t, err, check.ErrSimulated)
+}

@@ -30,6 +30,7 @@ type mockNeli struct {
 	runState      concurrent.AtomicReference
 	currentStatus concurrent.AtomicReference
 	targetStatus  concurrent.AtomicReference
+	pulseError    concurrent.AtomicReference
 }
 
 // MockNeli is a mock of Neli, producing the same behaviour as the real thing, but without contending for leadership.
@@ -37,6 +38,7 @@ type mockNeli struct {
 type MockNeli interface {
 	Neli
 	Transition(state MockLeaderStatus)
+	PulseError(err error)
 }
 
 // MockConfig encapsulates the configuration for MockNeli.
@@ -76,6 +78,7 @@ func NewMock(config MockConfig, barrier ...Barrier) (MockNeli, error) {
 		runState:      concurrent.NewAtomicReference(Live),
 		currentStatus: concurrent.NewAtomicReference(MockLeaderStatusRevoked),
 		targetStatus:  concurrent.NewAtomicReference(MockLeaderStatusRevoked),
+		pulseError:    concurrent.NewAtomicReference(),
 	}, nil
 }
 
@@ -103,6 +106,12 @@ func (m *mockNeli) Pulse(timeout time.Duration) (bool, error) {
 func (m *mockNeli) PulseCtx(ctx context.Context) (bool, error) {
 	for {
 		leader := m.tryPulse()
+
+		if m.pulseError.Get() != nil {
+			defer m.pulseError.Set(nil)
+			return m.IsLeader(), m.pulseError.Get().(error)
+		}
+
 		if m.State() != Live {
 			return leader, ErrNonLivePulse
 		}
@@ -124,16 +133,17 @@ func (m *mockNeli) PulseCtx(ctx context.Context) (bool, error) {
 
 func (m *mockNeli) tryPulse() bool {
 	m.pollDeadline.TryRun(func() {
+		fmt.Println("Transition ", m.getTargetStatus(), " ", m.getCurrentStatus())
 		if m.getCurrentStatus() != m.getTargetStatus() {
 			m.currentStatus.Set(m.targetStatus.Get())
-		}
-		switch m.getTargetStatus() {
-		case MockLeaderStatusAcquired:
-			m.barrier(&LeaderAcquired{})
-		case MockLeaderStatusRevoked:
-			m.barrier(&LeaderRevoked{})
-		case MockLeaderStatusFenced:
-			m.barrier(&LeaderFenced{})
+			switch m.getTargetStatus() {
+			case MockLeaderStatusAcquired:
+				m.barrier(&LeaderAcquired{})
+			case MockLeaderStatusRevoked:
+				m.barrier(&LeaderRevoked{})
+			case MockLeaderStatusFenced:
+				m.barrier(&LeaderFenced{})
+			}
 		}
 	})
 	return m.IsLeader()
@@ -169,4 +179,9 @@ func (m *mockNeli) Background(task LeaderTask) (Pulser, error) {
 // Transition the leader status of this instance.
 func (m *mockNeli) Transition(targetStatus MockLeaderStatus) {
 	m.targetStatus.Set(targetStatus)
+}
+
+// PulseError simulates a one-off error on Pulse/PulseCtx.
+func (m *mockNeli) PulseError(err error) {
+	m.pulseError.Set(err)
 }
