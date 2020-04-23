@@ -177,7 +177,10 @@ func (n *neli) logger() scribe.StdLogAPI {
 }
 
 func (n *neli) scene() scribe.Scene {
-	return scribe.Scene{Fields: scribe.Fields{"name": n.config.Name}}
+	return scribe.Scene{Fields: scribe.Fields{
+		"name": n.config.Name,
+		"lib":  "goneli",
+	}}
 }
 
 // IsLeader returns true if this Neli instance is currently the elected leader.
@@ -259,6 +262,7 @@ func (n *neli) tryPulse() (bool, error) {
 					n.logger().E()("Fatal error during poll: %v", err)
 				} else if !isTimedOutError(err) {
 					n.logger().W()("Recoverable error during poll: %v", err)
+					received = nil
 				}
 				break
 			} else {
