@@ -36,7 +36,7 @@ type Config struct {
 	Name                  string
 	PollDuration          *time.Duration
 	MinPollInterval       *time.Duration
-	ReceiveDeadline       *time.Duration
+	HeartbeatTimeout      *time.Duration
 }
 
 // Validate the Config, returning an error if invalid.
@@ -52,7 +52,7 @@ func (c Config) Validate() error {
 		validation.Field(&c.Name, validation.Required, validation.Match(regexp.MustCompile("^[^%]*$"))),
 		validation.Field(&c.PollDuration, validation.Required, validation.Min(1*time.Millisecond)),
 		validation.Field(&c.MinPollInterval, validation.Required, validation.Min(1*time.Millisecond)),
-		validation.Field(&c.ReceiveDeadline, validation.Required, validation.Min(1*time.Millisecond)),
+		validation.Field(&c.HeartbeatTimeout, validation.Required, validation.Min(1*time.Millisecond)),
 	)
 }
 
@@ -68,7 +68,7 @@ func (c Config) String() string {
 		", Name=", c.Name,
 		", PollDuration=", c.PollDuration,
 		", MinPollInterval=", c.MinPollInterval,
-		", ReceiveDeadline=", c.ReceiveDeadline, "]")
+		", HeartbeatTimeout=", c.HeartbeatTimeout, "]")
 }
 
 const (
@@ -78,8 +78,8 @@ const (
 	// DefaultMinPollInterval is the default value of Config.MinPollInterval
 	DefaultMinPollInterval = 100 * time.Millisecond
 
-	// DefaultReceiveDeadline is the default value of Config.ReceiveDeadline
-	DefaultReceiveDeadline = 5 * time.Second
+	// DefaultHeartbeatTimeout is the default value of Config.HeartbeatTimeout
+	DefaultHeartbeatTimeout = 5 * time.Second
 )
 
 // SetDefaults assigns the default values to optional fields.
@@ -111,7 +111,7 @@ func (c *Config) SetDefaults() {
 
 	defaultDuration(&c.PollDuration, DefaultPollDuration)
 	defaultDuration(&c.MinPollInterval, DefaultMinPollInterval)
-	defaultDuration(&c.ReceiveDeadline, DefaultReceiveDeadline)
+	defaultDuration(&c.HeartbeatTimeout, DefaultHeartbeatTimeout)
 }
 
 const validKafkaNameChars = "a-zA-Z0-9\\._\\-"

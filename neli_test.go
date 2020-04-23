@@ -35,7 +35,7 @@ func (fixtureOpts fixtures) create() (scribe.MockScribe, *consMock, *prodMock, C
 		LeaderTopic:           "test.topic",
 		MinPollInterval:       Duration(1 * time.Millisecond),
 		PollDuration:          Duration(1 * time.Millisecond),
-		ReceiveDeadline:       Duration(10 * time.Second),
+		HeartbeatTimeout:      Duration(10 * time.Second),
 	}
 	config.Scribe.SetEnabled(scribe.All)
 
@@ -328,7 +328,7 @@ func TestLeaderElectionAndRevocation_nopBarrier(t *testing.T) {
 
 func TestLeaderElectionAndRevocation_timeoutAndReconnect(t *testing.T) {
 	m, cons, _, config, b := fixtures{}.create()
-	config.ReceiveDeadline = Duration(1 * time.Millisecond)
+	config.HeartbeatTimeout = Duration(1 * time.Millisecond)
 
 	n, err := New(config, b.barrier())
 	require.Nil(t, err)
