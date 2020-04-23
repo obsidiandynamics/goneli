@@ -88,8 +88,8 @@ func TestCorrectInitialisation(t *testing.T) {
 		givenProducerConfig = conf
 		return prod, nil
 	}
-	config.LeaderTopic = "test leader topic"
-	config.LeaderGroupID = "test leader group ID"
+	config.LeaderTopic = "test-leader-topic"
+	config.LeaderGroupID = "test-leader-group-ID"
 	config.KafkaConfig = KafkaConfigMap{
 		"bootstrap.servers": "localhost:9092",
 	}

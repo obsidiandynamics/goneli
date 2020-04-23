@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"time"
 
 	validation "github.com/go-ozzo/ozzo-validation"
@@ -40,12 +41,15 @@ type Config struct {
 
 // Validate the Config, returning an error if invalid.
 func (c Config) Validate() error {
+	validName := matchValidKafkaChars()
 	return validation.ValidateStruct(&c,
 		validation.Field(&c.KafkaConfig, validation.NotNil),
+		validation.Field(&c.LeaderTopic, validation.Required, validation.Match(validName)),
+		validation.Field(&c.LeaderGroupID, validation.Required, validation.Match(validName)),
 		validation.Field(&c.KafkaConsumerProvider, validation.NotNil),
 		validation.Field(&c.KafkaProducerProvider, validation.NotNil),
 		validation.Field(&c.Scribe, validation.NotNil),
-		validation.Field(&c.Name, validation.Required),
+		validation.Field(&c.Name, validation.Required, validation.Match(regexp.MustCompile("^[^%]*$"))),
 		validation.Field(&c.PollDuration, validation.Required, validation.Min(1*time.Millisecond)),
 		validation.Field(&c.MinPollInterval, validation.Required, validation.Min(1*time.Millisecond)),
 		validation.Field(&c.ReceiveDeadline, validation.Required, validation.Min(1*time.Millisecond)),
@@ -87,7 +91,7 @@ func (c *Config) SetDefaults() {
 		c.KafkaConfig["bootstrap.servers"] = "localhost:9092"
 	}
 	if c.LeaderGroupID == "" {
-		c.LeaderGroupID = filepath.Base(os.Args[0])
+		c.LeaderGroupID = Sanitise(filepath.Base(os.Args[0]))
 	}
 	if c.LeaderTopic == "" {
 		c.LeaderTopic = c.LeaderGroupID + ".neli"
@@ -102,12 +106,26 @@ func (c *Config) SetDefaults() {
 		c.Scribe = scribe.New(scribe.StandardBinding())
 	}
 	if c.Name == "" {
-		c.Name = fmt.Sprintf("%s_%d_%d", getString("localhost", os.Hostname), os.Getpid(), time.Now().Unix())
+		c.Name = fmt.Sprintf("%s_%d_%d", Sanitise(getString("localhost", os.Hostname)), os.Getpid(), time.Now().Unix())
 	}
 
 	defaultDuration(&c.PollDuration, DefaultPollDuration)
 	defaultDuration(&c.MinPollInterval, DefaultMinPollInterval)
 	defaultDuration(&c.ReceiveDeadline, DefaultReceiveDeadline)
+}
+
+const validKafkaNameChars = "a-zA-Z0-9\\._\\-"
+
+// Obtains a regular expression matcher for the set of valid characters
+// allowed in Kafka resource names.
+func matchValidKafkaChars() *regexp.Regexp {
+	return regexp.MustCompile("^[" + validKafkaNameChars + "]*$")
+}
+
+// Sanitise cleans up the given name by replacing all characters in the pattern [^a-zA-Z0-9\\._\\-]
+// with underscores.
+func Sanitise(name string) string {
+	return string(regexp.MustCompile("[^"+validKafkaNameChars+"]").ReplaceAll([]byte(name), []byte("_")))
 }
 
 type stringGetter func() (string, error)

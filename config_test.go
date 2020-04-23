@@ -1,11 +1,13 @@
 package goneli
 
 import (
+	"fmt"
 	"testing"
 
 	"github.com/obsidiandynamics/libstdgo/check"
 	"github.com/obsidiandynamics/libstdgo/scribe"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestDefaultKafkaConsumerProvider(t *testing.T) {
@@ -70,6 +72,37 @@ func TestValidateConfig_invalidLimits(t *testing.T) {
 	}
 	cfg.SetDefaults()
 	assert.NotNil(t, cfg.Validate())
+}
+
+func TestValidateConfig_invalidName(t *testing.T) {
+	cfg := Config{
+		Name: "some%thing",
+	}
+	cfg.SetDefaults()
+	err := cfg.Validate()
+	require.NotNil(t, err)
+	require.Equal(t, "Name: must be in a valid format.", err.Error())
+}
+
+func TestValidateConfig_invalidLeaderTopic(t *testing.T) {
+	cfg := Config{
+		LeaderTopic: "topic$#",
+	}
+	cfg.SetDefaults()
+	fmt.Println(cfg)
+	err := cfg.Validate()
+	require.NotNil(t, err)
+	require.Equal(t, "LeaderTopic: must be in a valid format.", err.Error())
+}
+
+func TestSanitiseName(t *testing.T) {
+	cfg := Config{
+		Name: "some%thing",
+	}
+	cfg.SetDefaults()
+	err := cfg.Validate()
+	require.NotNil(t, err)
+	require.Equal(t, err.Error(), "Name: must be in a valid format.")
 }
 
 func TestValidateConfig_default(t *testing.T) {

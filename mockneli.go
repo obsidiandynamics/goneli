@@ -130,7 +130,6 @@ func (m *mockNeli) PulseCtx(ctx context.Context) (bool, error) {
 
 func (m *mockNeli) tryPulse() bool {
 	m.pollDeadline.TryRun(func() {
-		fmt.Println("Transition ", m.getTargetStatus(), " ", m.getCurrentStatus())
 		if m.getCurrentStatus() != m.getTargetStatus() {
 			m.currentStatus.Set(m.targetStatus.Get())
 			switch m.getTargetStatus() {
