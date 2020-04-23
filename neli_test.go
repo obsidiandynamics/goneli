@@ -251,7 +251,7 @@ func TestBasicLeaderElectionAndRevocation(t *testing.T) {
 	m.Reset()
 	wait(t).UntilAsserted(func(t check.Tester) {
 		if assert.Equal(t, 1, b.length()) {
-			_ = b.list()[0].(*LeaderAcquired)
+			_ = b.list()[0].(LeaderAcquired)
 		}
 	})
 	wait(t).UntilAsserted(atLeast(1, onLeaderCnt.GetInt))
@@ -277,7 +277,7 @@ func TestBasicLeaderElectionAndRevocation(t *testing.T) {
 	m.Reset()
 	wait(t).UntilAsserted(func(t check.Tester) {
 		if assert.Equal(t, 2, b.length()) {
-			_ = b.list()[1].(*LeaderRevoked)
+			_ = b.list()[1].(LeaderRevoked)
 		}
 	})
 
@@ -352,7 +352,7 @@ func TestLeaderElectionAndRevocation_timeoutAndReconnect(t *testing.T) {
 	wait(t).UntilAsserted(atLeast(1, onLeaderCnt.GetInt))
 	wait(t).UntilAsserted(func(t check.Tester) {
 		if assert.GreaterOrEqual(t, b.length(), 1) {
-			_ = b.list()[0].(*LeaderAcquired)
+			_ = b.list()[0].(LeaderAcquired)
 		}
 	})
 	wait(t).UntilAsserted(m.ContainsEntries().
@@ -361,7 +361,7 @@ func TestLeaderElectionAndRevocation_timeoutAndReconnect(t *testing.T) {
 		Passes(scribe.Count(1)))
 	wait(t).UntilAsserted(func(t check.Tester) {
 		if assert.GreaterOrEqual(t, b.length(), 2) {
-			_ = b.list()[1].(*LeaderFenced)
+			_ = b.list()[1].(LeaderFenced)
 		}
 	})
 	m.Reset()
@@ -375,7 +375,7 @@ func TestLeaderElectionAndRevocation_timeoutAndReconnect(t *testing.T) {
 		Passes(scribe.Count(1)))
 	wait(t).UntilAsserted(func(t check.Tester) {
 		if assert.GreaterOrEqual(t, b.length(), 3) {
-			_ = b.list()[2].(*LeaderAcquired)
+			_ = b.list()[2].(LeaderAcquired)
 		}
 	})
 

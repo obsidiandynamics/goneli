@@ -135,11 +135,11 @@ func (m *mockNeli) tryPulse() bool {
 			m.currentStatus.Set(m.targetStatus.Get())
 			switch m.getTargetStatus() {
 			case mockLeaderStatusAcquired:
-				m.barrier(&LeaderAcquired{})
+				m.barrier(LeaderAcquired{})
 			case mockLeaderStatusRevoked:
-				m.barrier(&LeaderRevoked{})
+				m.barrier(LeaderRevoked{})
 			case mockLeaderStatusFenced:
-				m.barrier(&LeaderFenced{})
+				m.barrier(LeaderFenced{})
 			}
 		}
 	})

@@ -74,13 +74,13 @@ func test(t *testing.T, numNodes int, spawnInterval time.Duration) {
 		scr.I()("Starting Neli %d/%d", i+1, numNodes)
 		n, err := New(config, func(e Event) {
 			switch e.(type) {
-			case *LeaderAcquired:
+			case LeaderAcquired:
 				scr.I()("Elected leader %s", config.Name)
 				assert.Equal(t, 1, countLeaders(ns, nsMutex))
-			case *LeaderRevoked:
+			case LeaderRevoked:
 				scr.I()("Revoked leader %s", config.Name)
 				assert.Equal(t, 0, countLeaders(ns, nsMutex))
-			case *LeaderFenced:
+			case LeaderFenced:
 				scr.I()("Fenced leader %s", config.Name)
 				assert.Equal(t, 0, countLeaders(ns, nsMutex))
 			default:

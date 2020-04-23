@@ -276,7 +276,7 @@ func (n *neli) tryPulse() (bool, error) {
 					// leadership.
 					n.isLeader.Set(1)
 					n.logger().I()("Resumed leader status (heartbeat received)")
-					n.barrier(&LeaderAcquired{})
+					n.barrier(LeaderAcquired{})
 				}
 			} else {
 				// No messages were received during the last poll.
@@ -287,7 +287,7 @@ func (n *neli) tryPulse() (bool, error) {
 					if elapsed := time.Now().Sub(lastReceived); elapsed > *n.config.ReceiveDeadline {
 						n.logger().I()("Fenced leader (heartbeat timed out)")
 						n.isLeader.Set(0)
-						n.barrier(&LeaderFenced{})
+						n.barrier(LeaderFenced{})
 					}
 				}
 			}
@@ -330,7 +330,7 @@ func onAssigned(n *neli, assigned kafka.AssignedPartitions) {
 		n.isAssigned.Set(1)
 		n.isLeader.Set(1)
 		n.lastReceived.Set(time.Now().UnixNano())
-		n.barrier(&LeaderAcquired{})
+		n.barrier(LeaderAcquired{})
 	}
 }
 
@@ -340,7 +340,7 @@ func onRevoked(n *neli, revoked kafka.RevokedPartitions) {
 		n.logger().I()("Lost leader status")
 		n.isAssigned.Set(0)
 		n.isLeader.Set(0)
-		n.barrier(&LeaderRevoked{})
+		n.barrier(LeaderRevoked{})
 	}
 }
 

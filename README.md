@@ -86,14 +86,14 @@ config := Config{
 // wrap up in-flight work upon loss of leader status.
 barrier := func(e Event) {
   switch e.(type) {
-  case *LeaderAcquired:
+  case LeaderAcquired:
     // The application may initialise any state necessary to perform work as a leader.
     log.Infof("Received event: leader elected")
-  case *LeaderRevoked:
+  case LeaderRevoked:
     // The application may block the Barrier callback until it wraps up any in-flight
     // activity. Only upon returning from the callback, will a new leader be elected.
     log.Infof("Received event: leader revoked")
-  case *LeaderFenced:
+  case LeaderFenced:
     // The application must immediately terminate any ongoing activity, on the assumption
     // that another leader may be imminently elected. Unlike the handling of LeaderRevoked,
     // blocking in the Barrier callback will not prevent a new leader from being elected.

@@ -34,20 +34,20 @@ func TestTransition(t *testing.T) {
 	isLeader, err := m.Pulse(10 * time.Second)
 	require.Nil(t, err)
 	require.True(t, isLeader)
-	require.Equal(t, &LeaderAcquired{}, event.Get())
+	require.Equal(t, LeaderAcquired{}, event.Get())
 	require.True(t, m.IsLeader())
 	require.NotEqual(t, time.Unix(0, 0), m.Deadline().Last())
 
 	// Transition away from leader state.
 	m.RevokeLeader()
 	require.True(t, m.IsLeader())
-	require.Equal(t, &LeaderAcquired{}, event.Get())
+	require.Equal(t, LeaderAcquired{}, event.Get())
 
 	m.Deadline().Move(time.Unix(0, 0))
 	isLeader, err = m.Pulse(1 * time.Millisecond)
 	require.Nil(t, err)
 	require.False(t, isLeader)
-	require.Equal(t, &LeaderRevoked{}, event.Get())
+	require.Equal(t, LeaderRevoked{}, event.Get())
 	require.False(t, m.IsLeader())
 
 	// Fenced state.
@@ -56,7 +56,7 @@ func TestTransition(t *testing.T) {
 	isLeader, err = m.Pulse(1 * time.Millisecond)
 	require.Nil(t, err)
 	require.False(t, isLeader)
-	require.Equal(t, &LeaderFenced{}, event.Get())
+	require.Equal(t, LeaderFenced{}, event.Get())
 	require.False(t, m.IsLeader())
 
 	require.Nil(t, m.Close())
@@ -100,7 +100,7 @@ func TestMockBackground(t *testing.T) {
 
 	m.AcquireLeader()
 	wait(t).UntilAsserted(func(t check.Tester) {
-		assert.Equal(t, &LeaderAcquired{}, event.Get())
+		assert.Equal(t, LeaderAcquired{}, event.Get())
 		assert.GreaterOrEqual(t, liveCount.GetInt(), 1)
 	})
 
@@ -128,7 +128,7 @@ func TestMockPulseEventuallyLeader(t *testing.T) {
 	var m MockNeli
 	barrier := func(e Event) {
 		switch e.(type) {
-		case *LeaderFenced:
+		case LeaderFenced:
 			m.AcquireLeader()
 		}
 	}
