@@ -10,6 +10,19 @@
 
 Implementation of the [NELI](https://github.com/obsidiandynamics/neli) leader election protocol for Go and Kafka. goNELI encapsulates the 'fast' variation of the protocol, running in exclusive mode over a group of contending processes.
 
+# Concept
+Leader election is a straightforward concept, long-standing in the academic papers on distributed computing. For a set of competing processes, select one process that is a notional **leader**, ensuring that at-most one process may bear the leader status at any point in time, and that this status is unanimously agreed upon among the remaining processes. Conceptually, leader election is depicted below.
+
+<img src="https://raw.githubusercontent.com/wiki/obsidiandynamics/goneli/images/figure-concept.png" width="100%" alt="Leader Election Concept"/>
+
+<br/>
+
+As straightforward as the concept might appear, the implementation is considerably more nuanced, owing to the myriad of edge cases that must be accounted for — such as spurious process failures and network partitions. Leader election also requires additional infrastructure to provide for centralised coordination, increasing the complexity of the overall architecture.
+
+Meanwhile, many event-driven microservices have come to rely upon Apache Kafka for their messaging needs, and Kafka has an internal leader election mechanism for assigning the cluster controller as well as the group and transaction coordinators. Wouldn't it be nice if we could somehow 'borrow' this coveted feature for our own leader election needs?
+
+This is where NELI comes in. Rather than dragging in additional infrastructure components and dependencies, NELI makes do with what's already there.
+
 # Getting started
 ## Add the dependency
 ```sh
@@ -142,7 +155,7 @@ Rather than embedding a separate consensus protocol such as *PAXOS* or *Raft*, o
 
 Under NELI, leaders aren't agreed upon directly, but induced through other phenomena that are observable by the affected group members, allowing them to individually infer leadership. A member of a group can autonomously determine whether it is a leader or not. In the latter case, it cannot determine which process is the real leader, only that it is a process other than itself. While the information carried through NELI is not as comprehensive as an equivalent Atomic Broadcast, it is sufficient for leader election.
 
-# How it works
+# Design
 When a NELI client starts, it has no knowledge of whether it is a leader or a standby process. It uses an internal Kafka consumer client to subscribe to a topic specified by `Config.LeaderTopic`, using the `Config.LeaderGroupID` consumer group. These parameters may be chosen arbitrarily; however, they must be shared by all members of the encompassing process group, and may not be shared with members of unrelated process groups. As part of the subscription, a rebalance listener callback is registered with the Kafka consumer — to be notified of partition reassignments.
 
 No matter the chosen topic, it will always (by definition) have *at least* one partition — **partition zero**. It may carry other partitions too — indexes *1* through to *N-1*, where *N* is the topic width, but these may be disregarded. Ultimately, Kafka will assign *at most one owner to any given partition* — picking one consumer from the encompassing consumer group. (We say 'at most' because all consumers might be offline.) For partition zero, one process will be assigned ownership; others will be kept in a holding pattern — waiting for the current assignee to depart.
@@ -156,3 +169,7 @@ Kafka's group coordinator may later choose to reassign the partition to another 
 The rebalance callback straightforwardly determines leadership through partition assignment, where the latter is managed by Kafka's group coordinator. The use of the callback requires a stable network connection to the Kafka cluster; otherwise, if a network partition occurs, another client may be granted partition ownership behind the scenes — an event which is not synchronized with the outgoing leader. (Kafka's internal heartbeats are used to signal client presence to the broker, but they are not generally suitable for identifying network partitions.)
 
 In addition to observing partition assignment changes, the owner of partition zero periodically publishes a heartbeat message to `Config.LeaderTopic`. The client also consumes messages from that topic — effectively observing its own heartbeats, and thereby asserting that it is connected to the cluster *and* still owns the partition in question. If no heartbeat is received within the period specified by `Config.ReceiveDeadline` (5 seconds by default), the leader will clear the `isLeader` lag, while maintaining `isAssigned`. It will then forward a `LeaderFenced` event to the `Barrier` callback, taking the worst-case assumption that the partition will be reassigned. If connectivity is later resumed while the process is still the owner of the partition on the broker, it will again receive a heartbeat, allowing it to resume the leader role. If the partition has been subsequently reassigned, no heartbeat messages will be received upon reconnection and the client will be forced to rejoin the group — the act of which will invoke the rebalance callback, effectively resetting the client.
+
+The diagram below illustrates the [Fast NELI](https://github.com/obsidiandynamics/neli#fast-neli) algorithm.
+
+<img src="https://raw.githubusercontent.com/wiki/obsidiandynamics/goneli/images/figure-algorithm.png" width="100%" alt="Fast NELI algorithm"/>
