@@ -146,7 +146,58 @@ go func() {
 neli.Await()
 ```
 
-# Why NELI
+# Configuration
+There are handful of parameters that control goNELI's behaviour, assigned via the `Config` struct:
+
+<table>
+  <thead>
+    <tr>
+      <th>Parameter</th>
+      <th>Default value</th>
+      <th>Description</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr valign="top">
+      <td><code>KafkaConfig</code></td>
+      <td>Map containing <code>bootstrap.servers=localhost:9092</code>.</td>
+      <td>The configuration used by the underlying Kafka producer and consumer clients.</td>
+    </tr>
+    <tr valign="top">
+      <td><code>LeaderGroupID</code></td>
+      <td>The filename of the application binary.</td>
+      <td>A unique identifier shared by all instances among a group of competing processes. The <code>LeaderGroupID</code> is used as Kafka <code>group.id</code> property under the hood, when subscribing to the leader election topic.</td>
+    </tr>
+    <tr valign="top">
+      <td><code>LeaderTopic</code></td>
+      <td>The value of <code>LeaderGroupID</code>, suffixed with the string <code>.neli</code>.</td>
+      <td>The name of the Kafka topic used for orchestrating leader election. Competing processes subscribe to the same topic under an identical consumer group ID, using Kafka's exclusive partition assignment as a mechanism for arbitrating leader status.</td>
+    </tr>
+    <tr valign="top">
+      <td><code>Scribe</code></td>
+      <td>Scribe configured with bindings for <code>log.Printf()</code>; effectively the result of running <code>scribe.New(scribe.StandardBinding())</code>.</td>
+      <td>The logging façade used by the library, preconfigured with your logger of choice. See <a href="https://pkg.go.dev/github.com/obsidiandynamics/libstdgo/scribe?tab=doc">Scribe GoDocs</a>.</td>
+    </tr>
+    <tr valign="top">
+      <td><code>Name</code></td>
+      <td>A string in the form <code>{hostname}_{pid}_{time}</code>, where <code>{hostname}</code> is the result of invoking <code>os.Hostname()</code>, <code>{pid}</code> is the process ID, and <code>{time}</code> is the UNIX epoch time, in seconds.</td>
+      <td>A name for this instance. This field is informational only, accompanying all log messages.</td>
+    </tr>
+    <tr valign="top">
+      <td><code>MinPollInterval</code></td>
+      <td>100 ms</td>
+      <td>The lower bound on the poll interval, preventing the over-polling of Kafka on successive <code>Pulse()</code> invocations. Assuming <code>Pulse()</code> is called repeatedly by the application, NELI may poll Kafka at a longer interval than <code>MinPollInterval</code>, but not at a shorter interval. (Regular polling of Kafka is necessary to prove the liveness of the client and maintain internal partition assignment, but polling excessively is counterproductive.)</td>
+    </tr>
+    <tr valign="top">
+      <td><code>HeartbeatTimeout</code></td>
+      <td>5 s</td>
+      <td>The period that a leader will maintain its status, not having received a heartbeat message on the leader topic. After the timeout elapses, the leader will voluntarily yield its status, signalling a <code>LeaderFenced</code> event to the application.</td>
+    </tr>
+  </tbody>
+</table>
+
+# Design
+## Motivation
 Traditionally, leader election is performed using an *Atomic Broadcast* protocol, which provides a consistent view across a set of processes. Given that implementing consensus protocols is not trivial (even with the aid of libraries), most applications will defer to an external Group Management Service (GMS) or a Distributed Lock Manager (DLM) for arbitrating leadership among contending processes.
 
 A DLM/GMS, such as *Consul*, *Etcd*, *Chubby* or *ZooKeeper*, is an appropriate choice in many cases. A crucial point raised by the [NELI](https://github.com/obsidiandynamics/neli) paper (and the main reason for its existence) is that infrastructure may not be readily available to provide this capability. Further to that point, *someone* needs to configure and maintain this infrastructure, and ensure its continuous availability — otherwise it becomes a point of failure in itself. This problem is exacerbated in a µ-services architecture, where it is common-practice for services to own their dependencies. Should DLMs be classified as service-specific dependencies, or should they be shared? Either approach has its downsides.
@@ -155,7 +206,7 @@ Rather than embedding a separate consensus protocol such as *PAXOS* or *Raft*, o
 
 Under NELI, leaders aren't agreed upon directly, but induced through other phenomena that are observable by the affected group members, allowing them to individually infer leadership. A member of a group can autonomously determine whether it is a leader or not. In the latter case, it cannot determine which process is the real leader, only that it is a process other than itself. While the information carried through NELI is not as comprehensive as an equivalent Atomic Broadcast, it is sufficient for leader election.
 
-# Design
+## Algorithm
 When a NELI client starts, it has no knowledge of whether it is a leader or a standby process. It uses an internal Kafka consumer client to subscribe to a topic specified by `Config.LeaderTopic`, using the `Config.LeaderGroupID` consumer group. These parameters may be chosen arbitrarily; however, they must be shared by all members of the encompassing process group, and may not be shared with members of unrelated process groups. As part of the subscription, a rebalance listener callback is registered with the Kafka consumer — to be notified of partition reassignments.
 
 No matter the chosen topic, it will always (by definition) have *at least* one partition — **partition zero**. It may carry other partitions too — indexes *1* through to *N-1*, where *N* is the topic width, but these may be disregarded. Ultimately, Kafka will assign *at most one owner to any given partition* — picking one consumer from the encompassing consumer group. (We say 'at most' because all consumers might be offline.) For partition zero, one process will be assigned ownership; others will be kept in a holding pattern — waiting for the current assignee to depart.
