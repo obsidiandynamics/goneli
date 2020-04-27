@@ -161,16 +161,16 @@ There are handful of parameters that control goNELI's behaviour, assigned via th
     <tr valign="top">
       <td><code>KafkaConfig</code></td>
       <td>Map containing <code>bootstrap.servers=localhost:9092</code>.</td>
-      <td>The configuration used by the underlying Kafka producer and consumer clients.</td>
+      <td>Configuration shared by the underlying Kafka producer and consumer clients.</td>
     </tr>
     <tr valign="top">
       <td><code>LeaderGroupID</code></td>
-      <td>The filename of the application binary.</td>
-      <td>A unique identifier shared by all instances among a group of competing processes. The <code>LeaderGroupID</code> is used as Kafka <code>group.id</code> property under the hood, when subscribing to the leader election topic.</td>
+      <td>Assumes the filename of the application binary.</td>
+      <td>A unique identifier shared by all instances in a group of competing processes. The <code>LeaderGroupID</code> is used as Kafka <code>group.id</code> property under the hood, when subscribing to the leader election topic.</td>
     </tr>
     <tr valign="top">
       <td><code>LeaderTopic</code></td>
-      <td>The value of <code>LeaderGroupID</code>, suffixed with the string <code>.neli</code>.</td>
+      <td>Assumes the value of <code>LeaderGroupID</code>, suffixed with the string <code>.neli</code>.</td>
       <td>The name of the Kafka topic used for orchestrating leader election. Competing processes subscribe to the same topic under an identical consumer group ID, using Kafka's exclusive partition assignment as a mechanism for arbitrating leader status.</td>
     </tr>
     <tr valign="top">
@@ -181,17 +181,17 @@ There are handful of parameters that control goNELI's behaviour, assigned via th
     <tr valign="top">
       <td><code>Name</code></td>
       <td>A string in the form <code>{hostname}_{pid}_{time}</code>, where <code>{hostname}</code> is the result of invoking <code>os.Hostname()</code>, <code>{pid}</code> is the process ID, and <code>{time}</code> is the UNIX epoch time, in seconds.</td>
-      <td>A name for this instance. This field is informational only, accompanying all log messages.</td>
+      <td>The symbolic name of this instance. This field is informational only, accompanying all log messages.</td>
     </tr>
     <tr valign="top">
       <td><code>MinPollInterval</code></td>
       <td>100 ms</td>
-      <td>The lower bound on the poll interval, preventing the over-polling of Kafka on successive <code>Pulse()</code> invocations. Assuming <code>Pulse()</code> is called repeatedly by the application, NELI may poll Kafka at a longer interval than <code>MinPollInterval</code>, but not at a shorter interval. (Regular polling of Kafka is necessary to prove the liveness of the client and maintain internal partition assignment, but polling excessively is counterproductive.)</td>
+      <td>The lower bound on the poll interval, preventing the over-polling of Kafka on successive <code>Pulse()</code> invocations. Assuming <code>Pulse()</code> is called repeatedly by the application, NELI may poll Kafka at a longer interval than <code>MinPollInterval</code>. (Regular polling is necessary to prove client's liveness and maintain internal partition assignment, but polling excessively is counterproductive.)</td>
     </tr>
     <tr valign="top">
       <td><code>HeartbeatTimeout</code></td>
       <td>5 s</td>
-      <td>The period that a leader will maintain its status, not having received a heartbeat message on the leader topic. After the timeout elapses, the leader will voluntarily yield its status, signalling a <code>LeaderFenced</code> event to the application.</td>
+      <td>The period that a leader will maintain its status, not having received a heartbeat message on the leader topic. After the timeout elapses, the leader will assume a network partition and will voluntarily yield its status, signalling a <code>LeaderFenced</code> event to the application.</td>
     </tr>
   </tbody>
 </table>
