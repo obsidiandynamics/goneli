@@ -35,17 +35,17 @@ type Neli interface {
 }
 
 type neli struct {
-	config       Config
-	scribe       scribe.Scribe
-	consumer     KafkaConsumer
-	producer     KafkaProducer
-	pollDeadline concurrent.Deadline
-	lastReceived concurrent.AtomicCounter
-	isAssigned   concurrent.AtomicCounter
-	isLeader     concurrent.AtomicCounter
-	barrier      Barrier
-	state        concurrent.AtomicReference
-	stateMutex   sync.Mutex
+	config              Config
+	scribe              scribe.Scribe
+	consumer            KafkaConsumer
+	producer            KafkaProducer
+	pollDeadline        concurrent.Deadline
+	lastReceived        concurrent.AtomicCounter
+	isAssigned          concurrent.AtomicCounter
+	isLeader            concurrent.AtomicCounter
+	barrier             Barrier
+	state               concurrent.AtomicReference
+	stateMutex          sync.Mutex
 	deliveryHandlerDone chan int
 }
 
@@ -76,14 +76,14 @@ func New(config Config, barrier ...Barrier) (Neli, error) {
 		return nil, err
 	}
 	n := &neli{
-		config:       config,
-		scribe:       config.Scribe,
-		lastReceived: concurrent.NewAtomicCounter(),
-		isAssigned:   concurrent.NewAtomicCounter(),
-		isLeader:     concurrent.NewAtomicCounter(),
-		barrier:      barrierArg,
-		pollDeadline: concurrent.NewDeadline(*config.MinPollInterval),
-		state:        concurrent.NewAtomicReference(Live),
+		config:              config,
+		scribe:              config.Scribe,
+		lastReceived:        concurrent.NewAtomicCounter(),
+		isAssigned:          concurrent.NewAtomicCounter(),
+		isLeader:            concurrent.NewAtomicCounter(),
+		barrier:             barrierArg,
+		pollDeadline:        concurrent.NewDeadline(*config.MinPollInterval),
+		state:               concurrent.NewAtomicReference(Live),
 		deliveryHandlerDone: make(chan int),
 	}
 
@@ -137,7 +137,7 @@ func New(config Config, barrier ...Barrier) (Neli, error) {
 	n.producer = p
 	go func() {
 		defer close(n.deliveryHandlerDone)
-		
+
 		for event := range p.Events() {
 			switch e := event.(type) {
 			case *kafka.Message:
@@ -367,15 +367,16 @@ func (n *neli) Close() error {
 	defer func() {
 		<-n.deliveryHandlerDone
 	}()
-	defer func() {
-		go func() {
-			// A bug in confluent-kafka-go (#463) occasionally causes an indefinite syscall hang in Close(), after it closes
-			// the Events channel. So we delegate this to a separate goroutine — better an orphaned goroutine than a
-			// frozen harvester. (The rest of the battery will still unwind normally.)
-			n.producer.Close()
-		}()
-	}()
-	return n.consumer.Close()
+
+	// A bug in confluent-kafka-go (#463) occasionally causes an indefinite syscall hang in Close(), after it closes
+	// the Events channel. So we delegate this to a separate goroutine — better an orphaned goroutine than a
+	// frozen harvester. (The rest of the battery will still unwind normally.)
+	const closeTimeout = 10 * time.Second
+	_, _ = performTimed(void(n.producer.Close), closeTimeout)
+
+	// Similarly to the above, Consumer.Close() may also hang, and we need to cope with this until #463 is resolved.
+	_, err := performTimed(n.consumer.Close, closeTimeout)
+	return err
 }
 
 // Await the closing of this Neli instance.

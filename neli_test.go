@@ -506,6 +506,21 @@ func TestFatalErrorInProduce(t *testing.T) {
 	assert.Equal(t, "Fatal error: simulated", err.Error())
 }
 
+func TestCloseConsumerError(t *testing.T) {
+	_, cons, _, config, _ := fixtures{}.create()
+	cons.f.Close = func(m *consMock) error {
+		return check.ErrSimulated
+	}
+
+	n, err := New(config)
+	require.Nil(t, err)
+
+	err = n.Close()
+	require.Equal(t, check.ErrSimulated, err)
+
+	n.Await()
+}
+
 func TestDeliveryReports(t *testing.T) {
 	m, _, prod, config, _ := fixtures{}.create()
 
