@@ -372,10 +372,10 @@ func (n *neli) Close() error {
 	// the Events channel. So we delegate this to a separate goroutine — better an orphaned goroutine than a
 	// frozen harvester. (The rest of the battery will still unwind normally.)
 	const closeTimeout = 10 * time.Second
-	_, _ = performTimed(void(n.producer.Close), closeTimeout)
+	_, _ = performTimed(n.logger().W(), "producer close", void(n.producer.Close), closeTimeout)
 
 	// Similarly to the above, Consumer.Close() may also hang, and we need to cope with this until #463 is resolved.
-	_, err := performTimed(n.consumer.Close, closeTimeout)
+	_, err := performTimed(n.logger().W(), "consumer close", n.consumer.Close, closeTimeout)
 	return err
 }
 

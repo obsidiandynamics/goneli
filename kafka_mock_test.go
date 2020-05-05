@@ -10,19 +10,16 @@ import (
 type consMockFuncs struct {
 	Subscribe   func(m *consMock, topic string, rebalanceCb kafka.RebalanceCb) error
 	ReadMessage func(m *consMock, timeout time.Duration) (*kafka.Message, error)
-	Events      func(m *consMock) chan kafka.Event
 	Close       func(m *consMock) error
 }
 
 type consMockCounts struct {
 	Subscribe,
 	ReadMessage,
-	Events,
 	Close concurrent.AtomicCounter
 }
 
 type consMock struct {
-	events            chan kafka.Event
 	rebalanceCallback kafka.RebalanceCb
 	rebalanceEvents   chan kafka.Event
 	messages          chan *kafka.Message
@@ -50,20 +47,12 @@ func (m *consMock) ReadMessage(timeout time.Duration) (*kafka.Message, error) {
 	return m.f.ReadMessage(m, timeout)
 }
 
-func (m *consMock) Events() chan kafka.Event {
-	defer m.c.Events.Inc()
-	return m.f.Events(m)
-}
-
 func (m *consMock) Close() error {
 	defer m.c.Close.Inc()
 	return m.f.Close(m)
 }
 
 func (m *consMock) fillDefaults() {
-	if m.events == nil {
-		m.events = make(chan kafka.Event)
-	}
 	if m.rebalanceEvents == nil {
 		m.rebalanceEvents = make(chan kafka.Event)
 	}
@@ -85,17 +74,11 @@ func (m *consMock) fillDefaults() {
 			}
 		}
 	}
-	if m.f.Events == nil {
-		m.f.Events = func(m *consMock) chan kafka.Event {
-			return m.events
-		}
-	}
 	if m.f.Close == nil {
 		m.f.Close = func(m *consMock) error {
 			return nil
 		}
 	}
-	m.c.Events = concurrent.NewAtomicCounter()
 	m.c.Subscribe = concurrent.NewAtomicCounter()
 	m.c.ReadMessage = concurrent.NewAtomicCounter()
 	m.c.Close = concurrent.NewAtomicCounter()

@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/obsidiandynamics/libstdgo/concurrent"
+	"github.com/obsidiandynamics/libstdgo/scribe"
 )
 
 var errPerformWithNoError = errors.New("")
@@ -16,10 +17,10 @@ func void(f func()) func() error {
 	}
 }
 
-func performTimed(f func() error, timeout time.Duration) (bool, error) {
+func performTimed(logger scribe.Logger, opName string, op func() error, timeout time.Duration) (bool, error) {
 	errorRef := concurrent.NewAtomicReference()
 	go func() {
-		err := f()
+		err := op()
 		if err != nil {
 			errorRef.Set(err)
 		} else {
@@ -29,6 +30,7 @@ func performTimed(f func() error, timeout time.Duration) (bool, error) {
 
 	res := errorRef.Await(concurrent.RefNot(concurrent.RefNil()), timeout)
 	if res == nil {
+		logger("Operation '%s' failed to complete within %v", opName, timeout)
 		return false, nil
 	}
 	if err := res.(error); err != errPerformWithNoError {

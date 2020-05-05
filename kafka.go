@@ -15,7 +15,6 @@ Interfaces.
 type KafkaConsumer interface {
 	Subscribe(topic string, rebalanceCb kafka.RebalanceCb) error
 	ReadMessage(timeout time.Duration) (*kafka.Message, error)
-	Events() chan kafka.Event
 	Close() error
 }
 
