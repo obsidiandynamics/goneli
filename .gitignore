@@ -27,3 +27,5 @@
 
 # Broker certs
 /ca-*
+
+.idea
